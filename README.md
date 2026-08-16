@@ -1,6 +1,6 @@
 # dsh-memory-palace
 
-把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
+把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
@@ -67,6 +67,7 @@ turn/end ──► 追加对话摘要到 YYYY-MM-DD.md（全部目标目录）
 前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。
 
 ```bash
+git clone https://github.com/lovezi0/dsh-memory-palace.git
 cd dsh-memory-palace
 npm install
 npm run build        # src/ → lib/（纯复制，零外部构建依赖）
@@ -131,6 +132,7 @@ node test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section 
 
 ## 版本历史
 
+- **0.5.2** — 修正 DeepSeek Harness 链接；安装步骤补充 `git clone`。
 - **0.5.1** — 开源发布：补充 README 与 LICENSE（MIT）。
 - **0.5.0** — 新增 `memory_read` 聚合读取工具（用户级 + 项目级 + 今日 + 最近 3 份日志）。
 - **0.4.0** — 新增 `memory_note` / `memory_note_user` 写入工具，内置内容去重。
