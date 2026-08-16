@@ -1,8 +1,8 @@
 # 依赖
 node_modules/
 
-# 构建产物（npm publish 时由 prepublishOnly 自动重建）
-lib/
+# 构建产物：lib/ 随仓库分发（git 渠道装即用，避免 pnpm 拦截 prepare 构建脚本）
+# 注意：改动 src/ 后必须 npm run build 并连同 lib/ 一起提交
 
 # 日志
 *.log

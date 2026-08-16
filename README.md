@@ -66,12 +66,27 @@ turn/end ──► 追加对话摘要到 YYYY-MM-DD.md（全部目标目录）
 
 前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。
 
+方式一：直接通过 GitHub 安装（推荐，`lib/` 构建产物已随仓库分发，装即用）
+
+```bash
+dsh plugin --profile web add github:lovezi0/dsh-memory-palace
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v0.5.1
+```
+
+方式二：clone 后本地安装（开发 / 修改源码场景）
+
 ```bash
 git clone https://github.com/lovezi0/dsh-memory-palace.git
 cd dsh-memory-palace
 npm install
 npm run build        # src/ → lib/（纯复制，零外部构建依赖）
 dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实际配置调整）
+```
+
+方式三：从 npm registry 安装（若已发布）
+
+```bash
+dsh plugin --profile web add dsh-memory-palace
 ```
 
 卸载：
