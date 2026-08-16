@@ -1,0 +1,17 @@
+# dsh-memory-palace bundle patch: 一个 insert 注册本插件。
+# insert.name 必须是【包名】（pnpm add 后由 profile 的 node_modules 解析到 lib/index.js）；
+# insert.id 必须与入口导出的 cordis `name`（'memory-palace'）一致。
+- insert:
+    - id: memory-palace
+      name: 'dsh-memory-palace'
+      config:
+        enabled: true
+        userMemoryPath: '~/.deepseek-harness/MEMORY.md'
+        workspaceMemoryDir: '.deepseek-harness/memory'
+        dailyLogRetentionDays: 30
+        userBudgetChars: 4000
+        workspaceBudgetChars: 3000
+        bridgeBuddyMemory: true
+        buddyWorkspaceMemoryDirs:
+          - '.workbuddy/memory'
+          - '.codebuddy/memory'
