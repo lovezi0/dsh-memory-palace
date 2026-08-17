@@ -344,7 +344,8 @@ export function apply(ctx, config) {
         "Read all persistent memory: user-level MEMORY.md (cross-project preferences), " +
         "and for the current project the workspace MEMORY.md plus recent daily logs " +
         "(YYYY-MM-DD.md) from .workbuddy/memory, .codebuddy/memory, or .deepseek-harness/memory. " +
-        "Use this instead of manually globbing/reading memory files — it aggregates everything.",
+        "Use this instead of manually globbing/reading memory files — it aggregates everything. " +
+        "This tool takes no parameters; call it with an empty object, e.g. tools.memory_read({}) — the runtime rejects undefined arguments.",
       parameters: {},
       output: {
         schema: {

@@ -147,6 +147,7 @@ node test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section 
 
 ## 版本历史
 
+- **0.6.1** — `memory_read` 防呆：注明无参工具须传空对象 `{}`，避免 run_code 参数绑定报错。
 - **0.6.0** — 记忆路径统一 `~` 简写，修复 AI 转述绝对路径漏分隔符。
 - **0.5.0** — 新增 `memory_read` 聚合读取工具（用户级 + 项目级 + 今日 + 最近 3 份日志）。
 - **0.4.0** — 新增 `memory_note` / `memory_note_user` 写入工具，内置内容去重。

@@ -15,7 +15,7 @@ ctx.provide("tools", toolsImpl);
 
 const origOn = ctx.on.bind(ctx);
 ctx.on = (ev, cb) => { (captured.listeners[ev] ||= []).push(cb); return origOn(ev, cb); };
-ctx.logger = { warn: (...a) => console.log("[warn]", ...a) };
+ctx.logger = { warn: (...a) => console.log("[warn]", ...a), error: (...a) => console.error("[error]", ...a), info: (...a) => console.log("[info]", ...a), debug: (...a) => console.log("[debug]", ...a) };
 
 const cfg = {
   enabled: true,
