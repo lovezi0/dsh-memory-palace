@@ -10,11 +10,14 @@
 
 - **人类可读的真源**：记忆全部存储在 Markdown 文件中（`MEMORY.md` + 每日日志 `YYYY-MM-DD.md`），任何编辑器可直接修改，数据永远属于你。
 - **双层记忆**：用户级（跨项目个人偏好，默认 `~/.deepseek-harness/MEMORY.md`）+ 工作区级（项目约定，默认 `<cwd>/.deepseek-harness/memory/`）。
-- **自动读写**：每轮对话将记忆注入系统提示词（同步读盘，零异步竞态）；每轮结束自动把对话摘要追加进当日日志。
+- **自动读写**：每轮对话将记忆注入系统提示词（同步读盘，零异步竞态）；每轮结束自动把轻量记录追加进当日日志（主路径由 agent 主动记，自动记录作兜底）。
 - **日志蒸馏**：超过保留天数（默认 30 天）的每日日志自动蒸馏进 `MEMORY.md` 后删除，长期记忆持续沉淀。
 - **WorkBuddy / CodeBuddy 桥接**：项目已存在 `.workbuddy/memory` 或 `.codebuddy/memory` 时直接读写这些目录，无需重复维护记忆。
-- **三个记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取），全部内置去重，防止重复追加。
+- **记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取）、`memory_delete`（按内容删除，两阶段确认 + 原生确认弹窗），全部内置去重，防止重复追加。
 - **设置页集成**：DSH 设置中内置「记忆」面板（中英双语），所有配置均可图形化调整，无需改配置文件。
+- **主动记忆（主路径）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档——零额外 LLM 调用、模型上下文完整，对标 WorkBuddy 的"智能记一笔"手感。
+- **轻量兜底记录（可开关）**：每轮结束对「有实质内容/工具/错误/明确记一笔」的轮次自动写轻量记录到每日日志（不调 LLM）；纯闲聊/无价值轮次不写。
+- **自动错误捕获（可开关）**：对话中出错时自动将「错误现象」按层级写入对应 `MEMORY.md`（用户级/项目级）；「根因/方案」由 agent 按记忆公民指令主动记；可在设置中关闭，默认开、关闭无需重启。
 - **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
 
 ## 记忆文件布局
@@ -46,12 +49,15 @@
 → 注入 system prompt，让 AI 跨会话保持一致
 ```
 
-**写入（每轮结束）**——监听 `session/event` 的 `turn/end`，异步追加当日日志：
+**写入（每轮结束）**——监听 `session/event` 的 `turn/end`，经「防闲聊闸门」判定后异步追加：
 
 ```
-turn/end ──► 追加对话摘要到 YYYY-MM-DD.md（全部目标目录）
-         └─► prune：超过 dailyLogRetentionDays 的日志
-             蒸馏进 MEMORY.md 后删除
+turn/end ──► 轻量兜底闸门
+         │     有工具调用 / 有错误 / agent 主动记 / 命中偏好·决策关键词 → 放行
+         │     否则：跳过（不写、不调 LLM）
+         ├─► 轻量条目写入 YYYY-MM-DD.md（全部目标目录；可关）
+         ├─► 若本轮出错且开启「对话出错自动记录」→ 「错误现象」写入对应 MEMORY.md
+         └─► prune：超过 dailyLogRetentionDays 的日志蒸馏进 MEMORY.md 后删除
 ```
 
 **工具**——AI 在对话中按需调用：
@@ -61,6 +67,7 @@ turn/end ──► 追加对话摘要到 YYYY-MM-DD.md（全部目标目录）
 | `memory_note` | 项目级 | 把约定/偏好写入当前项目全部目标 `MEMORY.md`（去重） |
 | `memory_note_user` | 用户级 | 把跨项目偏好写入 `~/.deepseek-harness/MEMORY.md`（去重） |
 | `memory_read` | 聚合 | 一次性读取用户级 + 项目级记忆、今日日志与最近 3 份历史日志 |
+| `memory_delete` | 用户级/项目级/每日级 | 按内容删除记忆条目（两阶段确认：先预览匹配位置与内容，用户确认后再删；删除动作经 harness 原生确认弹窗硬闸门，真人点允许才真正执行） |
 
 ## 安装
 
@@ -103,14 +110,21 @@ dsh plugin --profile web remove dsh-memory-palace
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `enabled` | `true` | 总开关，关闭后不注入、不写入 |
-| `userMemoryPath` | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
-| `workspaceMemoryDir` | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
-| `dailyLogRetentionDays` | `30` | 每日日志保留天数，过期蒸馏进 `MEMORY.md` |
-| `userBudgetChars` | `4000` | 注入系统提示词的用户级记忆长度上限（字符） |
-| `workspaceBudgetChars` | `3000` | 注入系统提示词的工作区级记忆长度上限（字符） |
-| `bridgeBuddyMemory` | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
-| `buddyWorkspaceMemoryDirs` | `[".workbuddy/memory", ".codebuddy/memory"]` | 要桥接的 buddy 目录列表（按优先级，已存在的全部同步写入） |
+| 总开关 | `true` | 总开关，关闭后不注入、不写入 |
+| 用户级记忆路径 | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
+| 工作区记忆目录 | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
+| 日志保留天数 | `30` | 每日日志保留天数，过期蒸馏进 `MEMORY.md` |
+| 用户级记忆字数上限 | `4000` | 注入系统提示词的用户级记忆长度上限（字符） |
+| 工作区级记忆字数上限 | `3000` | 注入系统提示词的工作区级记忆长度上限（字符） |
+| 桥接 Buddy 记忆 | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
+| Buddy 记忆目录列表 | `[".workbuddy/memory", ".codebuddy/memory"]` | 要桥接的 buddy 目录列表（按优先级，已存在的全部同步写入） |
+
+### 自动记录（设置页「记忆 → 自动记录」卡片）
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| 轮次结束自动记录 | `true` | 它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。 |
+| 对话出错自动记录 | `true` | 自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；默认开启，**关闭无需重启 dsh** |
 
 ## 开发
 
@@ -124,7 +138,7 @@ dsh-memory-palace/
 ├── scripts/
 │   └── build.mjs          # 构建脚本：src/ 纯复制到 lib/
 ├── cordis.patch.yml       # bundle patch：向 profile 注入本插件配置
-├── test-load.mjs          # 后端 cordis 单测（5 个场景：读写/桥接/去重/用户级/聚合读取）
+├── test-load.mjs          # 后端 cordis 单测（主动记忆注入/轻量兜底/错误捕获/桥接/去重/删除/确认弹窗等 60+ 项）
 ├── test-client-smoke.mjs  # 前端 client bundle 冒烟测试
 ├── lib/                   # 构建产物（由 src/ 复制，勿手改）
 └── package.json
@@ -147,13 +161,12 @@ node test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section 
 
 ## 版本历史
 
-- **0.6.1** — `memory_read` 防呆：注明无参工具须传空对象 `{}`，避免 run_code 参数绑定报错。
-- **0.6.0** — 记忆路径统一 `~` 简写，修复 AI 转述绝对路径漏分隔符。
-- **0.5.0** — 新增 `memory_read` 聚合读取工具（用户级 + 项目级 + 今日 + 最近 3 份日志）。
-- **0.4.0** — 新增 `memory_note` / `memory_note_user` 写入工具，内置内容去重。
-- **0.3.0** — 前端「记忆」设置页（独立设置页 slot，中英双语）。
-- **0.2.0** — 后端设置集成（`installSettingsSection` 注册配置面板）。
-- **0.1.0** — 核心：双层 Markdown 记忆读写、系统提示词注入、每日日志与蒸馏。
+- **1.0.0** — 防闲聊闸门 / 记忆公民指令 / 新增删除记忆工具
+- **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
+
+## 废弃方案
+
+插件侧 LLM 自动摘要（`ctx.llm.stream()` 路线）因契约/时机问题已废弃——4 个真机坑、深度调查结论与替代方案见 [废弃方案：为什么不用 LLM 自动摘要](./ABANDONED-LLM-SUMMARY.md)。
 
 ## License
 
