@@ -19,3 +19,6 @@ Thumbs.db
 # WorkBuddy / Harness 工具数据目录（本机开发笔记，不进仓库）
 .workbuddy/
 .deepseek-harness/
+
+# 本地测试数据（不入库）
+testdata/

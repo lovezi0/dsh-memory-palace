@@ -147,6 +147,7 @@ node test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section 
 
 ## 版本历史
 
+- **0.6.0** — 记忆路径防呆：注入/工具回显中的用户级路径统一改用 `~` 简写（`~/.deepseek-harness/MEMORY.md`），并在系统提示中约束 AI 不得逐字转述绝对路径（转述时易漏目录分隔符，如 `lovezi0.deepseek-harness`）。
 - **0.5.0** — 新增 `memory_read` 聚合读取工具（用户级 + 项目级 + 今日 + 最近 3 份日志）。
 - **0.4.0** — 新增 `memory_note` / `memory_note_user` 写入工具，内置内容去重。
 - **0.3.0** — 前端「记忆」设置页（独立设置页 slot，中英双语）。

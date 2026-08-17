@@ -47,6 +47,18 @@ function expandHome(p) {
   return p;
 }
 
+// 反向简写：home 下的绝对路径 → ~ 简写（统一正斜杠）。AI 转述绝对路径极易拼错
+// （实测出现过 lovezi0.deepseek-harness 缺分隔符），一律喂给它 ~ 简写。
+function toHomeShort(p) {
+  if (!p) return p;
+  const h = homedir();
+  if (p === h) return "~";
+  if (p.startsWith(h + "\\") || p.startsWith(h + "/")) {
+    return "~" + p.slice(h.length).replace(/\\/g, "/");
+  }
+  return p;
+}
+
 // 读取 Markdown 文件（同步，systemPrompt section 要求同步）。
 function readMdSync(path) {
   if (!path) return "";
@@ -131,22 +143,28 @@ export function apply(ctx, config) {
       const cfg = source();
       if (!cfg.enabled) return "";
       const userFileResolved = expandHome(cfg.userMemoryPath);
+      const userFileShort = toHomeShort(userFileResolved);
       const blocks = [];
       const u = readMdSync(userFileResolved);
-      if (u) blocks.push(`# 用户级记忆 (${userFileResolved})\n${u}`);
+      if (u) blocks.push(`# 用户级记忆 (${userFileShort})\n${u}`);
       for (const dir of readDirs()) {
+        const dirShort = toHomeShort(dir);
         const w = readMdSync(join(dir, "MEMORY.md"));
-        if (w) blocks.push(`# 工作区记忆 (${dir})\n${w}`);
+        if (w) blocks.push(`# 工作区记忆 (${dirShort})\n${w}`);
         const t = readMdSync(join(dir, `${todayISO()}.md`));
-        if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dir})\n${t}`);
+        if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dirShort})\n${t}`);
       }
       if (!blocks.length) return "";
       const bridged = buddyDirs().length > 0;
+      const antiMangle =
+        "提及记忆文件路径时一律用 ~ 简写（如 ~/.deepseek-harness/MEMORY.md），不要逐字拼写绝对路径——你转述绝对路径容易漏掉目录分隔符。";
       const intro = bridged
         ? "你拥有持久化、人类可直接编辑的 Markdown 记忆文件。当前项目已存在 WorkBuddy/CodeBuddy 项目记忆目录，本插件直接读写这些目录（不再单独创建 .deepseek-harness/memory/）。" +
-          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。"
+          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
+          antiMangle
         : "你拥有持久化、人类可直接编辑的 Markdown 记忆文件（位于 ~/.deepseek-harness/MEMORY.md 与各项目的 .deepseek-harness/memory/）。" +
-          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。";
+          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
+          antiMangle;
       return [intro, ...blocks].join("\n\n");
     },
   });
@@ -275,7 +293,7 @@ export function apply(ctx, config) {
       name: "memory_note_user",
       description:
         "Save a durable USER-LEVEL (cross-project) preference or fact to the user-level MEMORY.md " +
-        `(default ${expandHome(config.userMemoryPath)}). ` +
+        `(default ${toHomeShort(expandHome(config.userMemoryPath))}). ` +
         "Use it when the user states a personal preference or fact that applies across ALL projects. " +
         "For current-project conventions, use memory_note instead.",
       parameters: {
@@ -301,13 +319,14 @@ export function apply(ctx, config) {
         if (!cfg.enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
         try {
           const file = expandHome(cfg.userMemoryPath);
+          const fileShort = toHomeShort(file);
           const line = `- ${args.content}`;
           const wrote = await appendLineDedup(file, line);
           return {
             ok: true,
             message: wrote
-              ? `Saved to user-level memory (${file}).`
-              : `Already present in user-level memory (${file}); skipped.`,
+              ? `Saved to user-level memory (${fileShort}).`
+              : `Already present in user-level memory (${fileShort}); skipped.`,
           };
         } catch (e) {
           return { ok: false, message: `Failed: ${e}` };
@@ -345,13 +364,15 @@ export function apply(ctx, config) {
         try {
           const blocks = [];
           const userFile = expandHome(cfg.userMemoryPath);
+          const userFileShort = toHomeShort(userFile);
           const u = readMdSync(userFile);
-          if (u) blocks.push(`# 用户级记忆 (${userFile})\n${u}`);
+          if (u) blocks.push(`# 用户级记忆 (${userFileShort})\n${u}`);
           for (const dir of readDirs()) {
+            const dirShort = toHomeShort(dir);
             const w = readMdSync(join(dir, "MEMORY.md"));
-            if (w) blocks.push(`# 工作区记忆 (${dir})\n${w}`);
+            if (w) blocks.push(`# 工作区记忆 (${dirShort})\n${w}`);
             const t = readMdSync(join(dir, `${todayISO()}.md`));
-            if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dir})\n${t}`);
+            if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dirShort})\n${t}`);
             const recent = await recentLogs(dir, cfg);
             if (recent) blocks.push(recent);
           }
@@ -386,7 +407,7 @@ async function recentLogs(dir, cfg) {
   const parts = [];
   for (const date of dated) {
     const text = readMdSync(join(dir, `${date}.md`));
-    if (text) parts.push(`# 日志 ${date} @ ${dir}\n${text.slice(0, cfg.workspaceBudgetChars)}`);
+    if (text) parts.push(`# 日志 ${date} @ ${toHomeShort(dir)}\n${text.slice(0, cfg.workspaceBudgetChars)}`);
   }
   return parts.join("\n\n");
 }
