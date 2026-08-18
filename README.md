@@ -15,7 +15,8 @@
 - **WorkBuddy / CodeBuddy 桥接**：项目已存在 `.workbuddy/memory` 或 `.codebuddy/memory` 时直接读写这些目录，无需重复维护记忆。
 - **记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取）、`memory_delete`（按内容删除，两阶段确认 + 原生确认弹窗），全部内置去重，防止重复追加。
 - **设置页集成**：DSH 设置中内置「记忆」面板（中英双语），所有配置均可图形化调整，无需改配置文件。
-- **主动记忆（主路径）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档——零额外 LLM 调用、模型上下文完整，对标 WorkBuddy 的"智能记一笔"手感。
+- **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档——零额外 LLM 调用、模型上下文完整，对标 WorkBuddy 的"智能记一笔"手感。
+- **智能模式（LLM 智能会话摘要，可切换）**：两种记忆模式在设置页「自动记录」卡片切换（默认插件模式，切换需重启 dsh）。智能模式下，每轮命中防闲聊闸门后由 harness 的 `ctx.llm.stream()` 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志（带 `[smart]` 标记）+ durable 事实写 MEMORY.md（`- [smart] <fact>`，按 user/project 分层去重）；摘要模型默认复用当前会话，可在设置页固定；失败自动降级轻量条目不丢记忆。
 - **轻量兜底记录（可开关）**：每轮结束对「有实质内容/工具/错误/明确记一笔」的轮次自动写轻量记录到每日日志（不调 LLM）；纯闲聊/无价值轮次不写。
 - **自动错误捕获（可开关）**：对话中出错时自动将「错误现象」按层级写入对应 `MEMORY.md`（用户级/项目级）；「根因/方案」由 agent 按记忆公民指令主动记；可在设置中关闭，默认开、关闭无需重启。
 - **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
@@ -77,7 +78,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v0.5.1
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.1.4
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -90,19 +91,11 @@ npm run build        # src/ → lib/（纯复制，零外部构建依赖）
 dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实际配置调整）
 ```
 
-方式三：从 npm registry 安装（若已发布）
-
-```bash
-dsh plugin --profile web add dsh-memory-palace
-```
-
 卸载：
 
 ```bash
 dsh plugin --profile web remove dsh-memory-palace
 ```
-
-> `dsh plugin add .` 会在 profile 目录执行 `pnpm add <绝对路径>` 并自动把本包的 patch 层（`cordis.patch.yml`）注册进 profile 的 bundles。修改源码后重新 `npm run build` 并**重启 dsh** 即可生效，通常无需重新 add。
 
 ## 配置
 
@@ -123,50 +116,48 @@ dsh plugin --profile web remove dsh-memory-palace
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| 轮次结束自动记录 | `true` | 它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。 |
-| 对话出错自动记录 | `true` | 自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；默认开启，**关闭无需重启 dsh** |
+| 记忆模式 | `plugin` | 两种互斥模式：`plugin`=记忆公民指令+轮次轻量+错误捕获（默认）；`smart`=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md，带 `[smart]` 标记）。**切换需重启 dsh 生效** |
+| 轮次结束自动记录 | `true` | 插件模式下：它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。智能模式下该开关仍为总闸门 |
+| 摘要模型 | `""`（空=复用当前会话模型） | 智能模式专用：留空自动复用当前会话 provider/model；填 `provider/model`（如 `deepseek/deepseek-chat`）固定廉价模型省 token |
+| 对话出错自动记录 | `true` | 插件模式下：自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；默认开启，**关闭无需重启 dsh**。智能模式下错误由 LLM 摘要统一提炼 |
+
+> **设置保存（v1.1.4 起）**：设置页保存已**真正落盘**——插件注册了自有同源 route `/memory-palace/api`（服务端 `ctx.webServer`），前端 fetch 该 route、服务端直写 settings-file（`settings.yaml` 出现 `memory-palace:` 段），不再依赖 dsh 的 `settingsScope`（非 loopback 连接下其 `set()` 是 no-op）与 apiproxy 的 allowlist。保存**无需重启**即热生效；切换记忆模式仍按提示重启 dsh 更稳妥。
+>
+> 历史方案（仍可用作兜底）：直接在 profile 的 `cordis.patch.yml` 注入配置（id-targeted config override，与插件 bundle insert 的 id 一致）：
+>
+> ```yaml
+> - id: memory-palace
+>   name: 'dsh-memory-palace'
+>   config:
+>     memoryMode: smart
+>     summaryModel: ''
+> ```
+>
+> 修改后重启 dsh 生效。
 
 ## 开发
 
-### 目录结构
-
-```
-dsh-memory-palace/
-├── src/
-│   ├── index.mjs          # 插件后端入口（cordis 插件：name/Config/inject/apply）
-│   └── client.js          # 前端 client bundle（设置页「记忆」面板，中英双语）
-├── scripts/
-│   └── build.mjs          # 构建脚本：src/ 纯复制到 lib/
-├── cordis.patch.yml       # bundle patch：向 profile 注入本插件配置
-├── test-load.mjs          # 后端 cordis 单测（主动记忆注入/轻量兜底/错误捕获/桥接/去重/删除/确认弹窗等 60+ 项）
-├── test-client-smoke.mjs  # 前端 client bundle 冒烟测试
-├── lib/                   # 构建产物（由 src/ 复制，勿手改）
-└── package.json
-```
-
-### 构建与测试
-
-```bash
-npm run build
-node test-load.mjs            # 后端单测：加载、注入、日志写入、buddy 桥接、去重、memory_read
-node test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section 注入、set/unset 接口
-```
-
-### 技术要点
-
-- **纯复制构建**：`src/index.mjs`、`src/client.js` 都是标准 ESM，运行时由装载本包的 profile 解析 `@deepseek-ai/*` 依赖，因此 build 只是复制，零打包工具链。
-- **同步读取**：`systemPrompt.section` 的 `text()` 必须同步（harness 源码不 await），故读盘用 `readFileSync`；写盘走异步 `node:fs/promises`，不在同步热路径上。
-- **依赖约定**：`@deepseek-ai/*` 声明为 `peerDependencies`，运行时由 profile 的 `node_modules` 提供，本包不捆绑任何 harness 内部模块。
-- **不引入 `dsh-storage`**：其 JSON 落地与"记忆必须可读的 Markdown"这一核心价值冲突，刻意排除。
+目录结构、构建与测试、技术要点见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
 ## 版本历史
 
+- **1.1.4** — 智能模式摘要上线（LLM 智能会话摘要，与插件模式可切换）：摘要调用参考 dsh-sideband 加固（指令入 `system` 参数、`AbortSignal.timeout` 超时、`finish.kind` 细化）；修复设置-记忆保存不生效（自有同源 route `/memory-palace/api` 直写 settings-file，参考 dsh-better-sidebar，不动 harness）；修复长工具型任务不写记忆（turnBuffer 溢出误关闸门：上限 6k→30k、溢出保留尾部、闸门改 session 增量兜底）
+- **1.1.2** — 修复设置页「保存后自动切回插件模式」（save() 不再用保存前旧快照重置 draft）；说明 dsh web 端（非 loopback 连接）设置页保存为 memory 模式不落盘，关键配置请经 profile `cordis.patch.yml` 注入（见配置节）
+- **1.1.1** — 每日日志格式简化：文件头写当天日期（`# YYYY-MM-DD`），条目不再每条带时间戳（`[ERROR]`/`[smart]` 作条目前缀；旧文件自动补头）
+- **1.1.0** — 新增「智能模式」（LLM 智能会话摘要）：与插件模式在设置页切换、默认插件模式；智能模式经 `session.events` 增量提炼 summary→每日日志 + durable→MEMORY.md（带 `[smart]` 标记）；摘要模型默认复用当前会话、可固定；失败降级轻量条目不丢记忆；切换需重启 dsh
 - **1.0.0** — 防闲聊闸门 / 记忆公民指令 / 新增删除记忆工具
 - **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
 
 ## 废弃方案
 
-插件侧 LLM 自动摘要（`ctx.llm.stream()` 路线）因契约/时机问题已废弃——4 个真机坑、深度调查结论与替代方案见 [废弃方案：为什么不用 LLM 自动摘要](./ABANDONED-LLM-SUMMARY.md)。
+插件侧 LLM 自动摘要（`ctx.llm.stream()` 路线）曾在 v0.7.1 因 4 个契约/时机坑废弃；**v1.1.0 已重新论证并以「智能模式」可选形态复活**——经 `session.events` / `deriveEventMessage` / `requestHeader()?.config` 根除旧坑，默认仍为插件模式。见 [废弃方案：为什么不用 LLM 自动摘要](./ABANDONED-LLM-SUMMARY.md)。
+
+## 参考与致谢
+
+v1.1 的智能模式与设置保存链路，深度参考了以下两个开源项目（本包实现为各自机制的简化落地，不含其完整功能）：
+
+- **[dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)**（omdsh-dev）——设置**真保存**机制：插件自带同源 HTTP route + 服务端 `settings` 直写 settings-file，绕开 dsh `settingsScope`（非 loopback 下 `set()` no-op）与 apiproxy allowlist 两层限制，全程无需改动 harness。
+- **[dsh-sideband](https://github.com/ishuowang/dsh-sideband)**（ishuowang）——LLM 会话摘要的**调用范式**：摘要指令放 `system` 参数、`AbortSignal.timeout` 超时保护、`finish.kind` 细分（error/aborted/max-tokens）、流循环内中断检查。
 
 ## License
 

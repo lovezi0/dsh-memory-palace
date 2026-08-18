@@ -1,5 +1,10 @@
 # 废弃方案：为什么不用 LLM 自动摘要（`ctx.llm.stream()` 路线已废弃）
 
+> **⚠️ 2026-08-18（v1.1.0）重新引入**：本文「废弃结论」已作废——「插件侧 LLM 摘要」以**「智能模式」可选形态复活**（与插件模式互斥，默认插件模式，设置页切换、重启生效）。
+> 关键技术突破：直接使用 `session/event` 回调携带的 **`session` 对象**（`session.events` 全量事件日志、`session.deriveEventMessage(event)` 投影、`session.requestHeader()?.config` 取 provider/model、`session.firstLiveSeq`/`seq` 做增量断点），系统性根除本文记载的 4 个坑：
+> ① `createUserMessage` 契约 → 包数组即可；② 工具任务不落记忆 → 用 `deriveEventMessage` 投影而非手动解析 `.text`；③ 多 turn 丢记忆 → 按 seq 断点增量取全量日志；④ `callLlm 跳过`（拿不到模型）→ 结算时同步读 `session.requestHeader()?.config`（此刻 request/header 必已落地）。
+> 官方 `compaction-basic`（`inject:['llm','sessions']` + `requestHeader()?.config` + `ctx.llm.stream()`）即同款模式。
+
 > 本文记录 dsh-memory-palace 曾尝试、后经真机验证不可行的「插件侧 LLM 自动摘要」方案，
 > 以及放弃它的原因与替代方案。完整决策背景与调查过程见 `plans/v0.7.0.md`「方案修订」章节。
 

@@ -18,9 +18,9 @@ const BASE = {
   userBudgetChars: 4000,
   workspaceBudgetChars: 3000,
   summarize: true,
+  memoryMode: "plugin",
   summaryModel: "",
   autoCaptureErrors: true,
-  enableLlmJudgement: false,
 };
 
 let pass = 0;
@@ -35,16 +35,25 @@ function assert(cond, label) {
   }
 }
 
-function makeMockLlm() {
+function makeMockLlm(opts = {}) {
+  const text = opts.text !== undefined ? opts.text : '{"summary":"[SUMMARY]","durable":[]}';
+  const fail = !!opts.fail;
   return {
     calls: [],
-    async stream(opts) {
-      this.calls.push(opts);
+    // 注意：必须【同步】返回 async iterable（与真机 LlmRuntime.stream 契约一致，
+    // 见 packages/llm/llm/src/index.ts:913）；若写成 async 方法会返回 Promise，插件的
+    // `for await` 迭代 Promise 抛 TypeError → 摘要降级 → 测试掩盖真机行为。
+    stream(o) {
+      this.calls.push(o);
       async function* gen() {
+        if (fail) throw new Error("mock llm failure");
         yield { type: "block-start", index: 0, blockType: "text" };
-        yield { type: "text-delta", index: 0, text: "[SUMMARY]" };
-        yield { type: "block-end", index: 0, block: { type: "text", text: "[SUMMARY]" } };
-        yield { type: "finish", reason: { kind: "stop" } };
+        yield { type: "text-delta", index: 0, text };
+        yield { type: "block-end", index: 0, block: { type: "text", text } };
+        yield {
+          type: "finish",
+          reason: opts.finishKind ? { kind: opts.finishKind, failure: { message: "mock" } } : { kind: "stop" },
+        };
       }
       return gen();
     },
@@ -67,19 +76,52 @@ function msgsText(opts) {
   return JSON.stringify(m);
 }
 
-function fakeSession(cwd, provider = "deepseek", model = "deepseek-chat") {
+function fakeSession(cwd, provider = "deepseek", model = "deepseek-chat", events = []) {
+  const eventsArr = events.map((e, i) => ({ seq: i, ...e }));
+  const extract = (blocks) => {
+    if (typeof blocks === "string") return blocks;
+    if (!Array.isArray(blocks)) return "";
+    return blocks
+      .map((c) => {
+        if (typeof c === "string") return c;
+        if (typeof c?.text === "string") return c.text;
+        if (Array.isArray(c?.content)) return extract(c.content);
+        return "";
+      })
+      .join("");
+  };
   return {
+    id: "sess-" + Math.random().toString(36).slice(2, 8),
     header: { cwd },
+    firstLiveSeq: 0,
+    events: eventsArr,
+    get seq() {
+      return eventsArr.length;
+    },
+    push(e) {
+      eventsArr.push({ seq: eventsArr.length, ...e });
+    },
     requestHeader: () => ({ config: { provider, model } }),
+    deriveEventMessage(e) {
+      const d = e?.data;
+      const content = d?.message?.content ?? d?.content;
+      const text = extract(content).trim();
+      if (!text) return null;
+      const role = e?.type === "assistant/message" ? "assistant" : "user";
+      return { role, content: [{ type: "text", text }], source: { kind: "plugin", plugin: "test" } };
+    },
   };
 }
 
-async function loadPlugin(overrides = {}) {
+async function loadPlugin(overrides = {}, llmOpts) {
   const ctx = new Context();
   const captured = { sections: [], tools: [], listeners: {} };
   ctx.provide("systemPrompt", { section: (s) => { captured.sections.push(s); return () => {}; } });
   ctx.provide("tools", { register: (t) => { captured.tools.push(t); } });
-  const mockLlm = makeMockLlm();
+  // v1.1.3：设置读写 route 依赖 webServer/webRuntime（mock no-op；route 只在真实请求时执行）。
+  ctx.provide("webServer", { register: () => {} });
+  ctx.provide("webRuntime", { trustedHosts: [] });
+  const mockLlm = makeMockLlm(llmOpts || {});
   ctx.provide("llm", mockLlm);
   const origOn = ctx.on.bind(ctx);
   ctx.on = (ev, cb) => {
@@ -106,6 +148,8 @@ function fire(session, captured, type, data) {
       },
     };
   }
+  // 同步追加到 fakeSession 的事件日志（模拟真实 session 仅追加），供智能模式增量摘要取数。
+  if (session && typeof session.push === "function") session.push({ type, data: payload });
   for (const cb of captured.listeners["session/event"] || []) cb(session, { type, data: payload });
 }
 
@@ -127,7 +171,7 @@ const main = await loadPlugin();
 assert(main.captured.sections.length === 1, "[1] 1 section registered");
 assert(main.captured.tools.map((t) => t.name).join(",") === "memory_note,memory_note_user,memory_read,memory_delete", "[1] tools = memory_note,memory_note_user,memory_read,memory_delete");
 assert((main.captured.listeners["session/event"] || []).length === 1, "[1] session/event listener registered");
-assert(!inject.includes("llm"), "[1] inject no longer includes 'llm' (callLlm removed)");
+assert(inject.includes("llm"), "[1] inject includes 'llm' (smart mode needs it)");
 const text = main.captured.sections[0].text();
 assert(typeof text === "string", "[2] section.text() returns string");
 
@@ -483,6 +527,137 @@ console.log("[V] section 空记忆仍注入记忆公民指令");
   assert(typeof text === "string" && text.length > 0, "[V] 空记忆时 section 非空");
   assert(text.includes("记忆公民指令"), "[V] 空记忆时仍注入主动记忆指令");
   assert(text.includes("memory_note"), "[V] 指令含记忆工具指引");
+}
+
+// ---------- 场景 V2：智能模式 section 注入「记忆说明」而非「记忆公民指令」 ----------
+console.log("[V2] SMART MODE → section injects memory note, not citizen instruction");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-v2-"));
+  const { captured } = await loadPlugin({ memoryMode: "smart" });
+  const text = captured.sections[0].text();
+  assert(text.includes("记忆说明"), "[V2] smart section has memory note");
+  assert(!text.includes("记忆公民指令"), "[V2] smart section does NOT inject citizen instruction");
+  assert(text.includes("memory_read"), "[V2] smart section still mentions memory_read");
+}
+
+// ---------- 场景 S1：智能模式 → LLM 摘要 + [smart] 标记 + 复用会话模型 ----------
+console.log("[S1] SMART MODE → LLM summary + [smart] tag");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s1-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
+  fire(s, captured, "tool/result", { content: "src/index.mjs, src/client.js" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  const daily = dailyFile(ws);
+  assert(existsSync(daily), "[S1] daily written");
+  const text = readFileSync(daily, "utf8");
+  assert(text.includes("SUMMARY"), "[S1] daily contains LLM summary");
+  assert(text.includes("[smart]"), "[S1] daily entry tagged [smart]");
+  assert(mockLlm.calls.length >= 1, "[S1] llm called");
+  assert(mockLlm.calls[0].provider === "deepseek" && mockLlm.calls[0].model === "deepseek-chat", "[S1] provider/model from session requestHeader");
+}
+
+// ---------- 场景 S2：智能模式 → summaryModel 覆盖 ----------
+console.log("[S2] SMART MODE → summaryModel override");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s2-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", summaryModel: "openai/gpt-4o" });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "分析" } });
+  fire(s, captured, "tool/result", { content: "x" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  assert(mockLlm.calls.length >= 1, "[S2] llm called");
+  assert(mockLlm.calls[0].provider === "openai" && mockLlm.calls[0].model === "gpt-4o", "[S2] summaryModel override used");
+}
+
+// ---------- 场景 S3：智能模式 → 不做独立错误捕获（错误走摘要/降级） ----------
+console.log("[S3] SMART MODE → no independent plugin-style error capture");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s3-"));
+  const { captured } = await loadPlugin({ memoryMode: "smart" });
+  const s = fakeSession(ws);
+  fire(s, captured, "tool/result", { content: "boom: something failed" });
+  fire(s, captured, "turn/end", { reason: { kind: "error", message: "boom: hidden" } });
+  await sleep(1800);
+  const mem = join(ws, ".deepseek-harness/MEMORY.md");
+  const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
+  assert(!memText.includes("in-session 错误"), "[S3] smart mode does NOT write plugin-style error entry");
+}
+
+// ---------- 场景 S4：智能模式 → durable 提炼进 MEMORY.md（带 [smart] 标记 + 去重） ----------
+console.log("[S4] SMART MODE → durable distilled into MEMORY.md with [smart]");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s4-"));
+  const durableText = '{"summary":"did analysis","durable":[{"scope":"project","fact":"use tabs for indentation"}]}';
+  const { captured } = await loadPlugin({ memoryMode: "smart" }, { text: durableText });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "分析" } });
+  fire(s, captured, "tool/result", { content: "x" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  const mem = join(ws, ".deepseek-harness/MEMORY.md");
+  const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
+  assert(memText.includes("- [smart] use tabs for indentation"), "[S4] durable fact written to MEMORY.md with [smart]");
+  const count = (memText.match(/- \[smart\] use tabs for indentation/g) || []).length;
+  assert(count === 1, "[S4] durable deduplicated to 1");
+}
+
+// ---------- 场景 S5：智能模式 → 增量摘要（第二次只含新事件） ----------
+console.log("[S5] SMART MODE → incremental (2nd call only new events)");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s5-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "第一轮请求" } });
+  fire(s, captured, "tool/result", { content: "r1" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  assert(mockLlm.calls.length >= 1, "[S5] first settle called llm");
+  const firstLen = mockLlm.calls[0].messages.length;
+  fire(s, captured, "user/message", { message: { content: "第二轮请求" } });
+  fire(s, captured, "tool/result", { content: "r2" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  assert(mockLlm.calls.length >= 2, "[S5] second settle called llm again");
+  const secondMsgs = mockLlm.calls[mockLlm.calls.length - 1].messages;
+  const secondLen = secondMsgs.length;
+  assert(secondLen < firstLen + 2, "[S5] second call has fewer messages (incremental)");
+  const joined = msgsText({ messages: secondMsgs });
+  assert(!joined.includes("第一轮请求"), "[S5] second call does not repeat first-round content");
+  assert(joined.includes("第二轮请求"), "[S5] second call contains new content");
+}
+
+// ---------- 场景 S6：智能模式 → LLM 失败降级轻量条目（不抛、不丢记忆） ----------
+console.log("[S6] SMART MODE → LLM failure falls back to light entry");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s6-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" }, { fail: true });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "分析" } });
+  fire(s, captured, "tool/result", { content: "x" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  const daily = dailyFile(ws);
+  assert(existsSync(daily), "[S6] daily written despite llm failure");
+  const text = readFileSync(daily, "utf8");
+  assert(text.includes("分析"), "[S6] fallback light entry keeps raw text");
+  assert(mockLlm.calls.length >= 1, "[S6] llm attempted");
+}
+
+// ---------- 场景 S7：智能模式 → 防闲聊闸门（纯闲聊不调 LLM、不写） ----------
+console.log("[S7] SMART MODE → chitchat gate: no LLM call");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s7-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "hello" } });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  assert(mockLlm.calls.length === 0, "[S7] no LLM call on chitchat");
+  assert(!existsSync(dailyFile(ws)), "[S7] no daily written on chitchat");
 }
 
 // ---------- 场景 W：本地日期写入 + runtime-context 噪声剥离 ----------

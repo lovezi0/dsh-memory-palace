@@ -112,7 +112,6 @@ const injected = entry.options.inject ? entry.options.inject() : null;
 console.log("inject face keys =", injected ? Object.keys(injected) : "none");
 if (entry.options.id !== "memory-palace") throw new Error("FAIL: wrong section id");
 if (typeof entry.component !== "function") throw new Error("FAIL: missing component");
-if (!injected || typeof injected.set !== "function" || typeof injected.unset !== "function") {
-  throw new Error("FAIL: inject face missing set/unset");
-}
+// v1.1.3：设置读写改走自有 route（/memory-palace/api），inject face 不再提供 settingsScope set/unset。
+if (injected === null) throw new Error("FAIL: inject face missing");
 console.log("SMOKE OK");
