@@ -10,15 +10,14 @@
 
 - **人类可读的真源**：记忆全部存储在 Markdown 文件中（`MEMORY.md` + 每日日志 `YYYY-MM-DD.md`），任何编辑器可直接修改，数据永远属于你。
 - **双层记忆**：用户级（跨项目个人偏好，默认 `~/.deepseek-harness/MEMORY.md`）+ 工作区级（项目约定，默认 `<cwd>/.deepseek-harness/memory/`）。
-- **自动读写**：每轮对话将记忆注入系统提示词（同步读盘，零异步竞态）；每轮结束自动把轻量记录追加进当日日志（主路径由 agent 主动记，自动记录作兜底）。
-- **日志蒸馏**：超过保留天数（默认 30 天）的每日日志自动蒸馏进 `MEMORY.md` 后删除，长期记忆持续沉淀。
+- **自动读写**：每轮对话将记忆注入系统提示词；每轮结束自动把轻量记录追加进当日日志。
+- **日志迁移**：超过保留天数（默认 30 天）的每日日志自动迁移进 `MEMORY.md` 后删除，长期记忆持续沉淀。
 - **WorkBuddy / CodeBuddy 桥接**：项目已存在 `.workbuddy/memory` 或 `.codebuddy/memory` 时直接读写这些目录，无需重复维护记忆。
-- **记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取）、`memory_delete`（按内容删除，两阶段确认 + 原生确认弹窗），全部内置去重，防止重复追加。
+- **记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取）、`memory_delete`（按内容删除，两阶段确认），全部内置去重，防止重复追加。
+- **会话标题栏「记忆」按钮**：支持手动蒸馏：①蒸馏会话 / ②蒸馏项目记忆。
 - **设置页集成**：DSH 设置中内置「记忆」面板（中英双语），所有配置均可图形化调整，无需改配置文件。
-- **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档——零额外 LLM 调用、模型上下文完整，对标 WorkBuddy 的"智能记一笔"手感。
-- **智能模式（LLM 智能会话摘要，可切换）**：两种记忆模式在设置页「自动记录」卡片切换（默认插件模式，切换需重启 dsh）。智能模式下，每轮命中防闲聊闸门后由 harness 的 `ctx.llm.stream()` 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志（带 `[smart]` 标记）+ durable 事实写 MEMORY.md（`- [smart] <fact>`，按 user/project 分层去重）；摘要模型默认复用当前会话，可在设置页固定；失败自动降级轻量条目不丢记忆。
-- **轻量兜底记录（可开关）**：每轮结束对「有实质内容/工具/错误/明确记一笔」的轮次自动写轻量记录到每日日志（不调 LLM）；纯闲聊/无价值轮次不写。
-- **自动错误捕获（可开关）**：对话中出错时自动将「错误现象」按层级写入对应 `MEMORY.md`（用户级/项目级）；「根因/方案」由 agent 按记忆公民指令主动记；可在设置中关闭，默认开、关闭无需重启。
+- **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档 — 对标 WorkBuddy 的"智能记一笔"手感。
+- **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志（带 `[smart]` 标记）+ durable 事实写 MEMORY.md。
 - **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
 
 ## 记忆文件布局
@@ -29,13 +28,16 @@
 
 <项目根>/
 ├── .workbuddy/memory/             # 桥接 WorkBuddy 记忆（已存在时，按序优先）
-│   ├── MEMORY.md                  # 项目级约定
+│   ├── MEMORY.md                  # 项目级约定（buddy 目录保持嵌套，兼容 WB/CB 原生格式）
 │   └── 2026-08-16.md              # 每日工作日志
-├── .codebuddy/memory/             # 桥接 CodeBuddy 记忆（已存在时）
-└── .deepseek-harness/memory/      # 回退目录（无 buddy 目录时自动创建）
-    ├── MEMORY.md
-    └── 2026-08-16.md
+├── .codebuddy/memory/             # 桥接 CodeBuddy 记忆（已存在时，结构同 .workbuddy）
+└── .deepseek-harness/             # 回退目录（无 buddy 目录时自动创建）
+    ├── MEMORY.md                  # 项目级约定（长期记忆，与 memory/ 同级）
+    └── memory/
+        └── 2026-08-16.md          # 每日工作日志
 ```
+
+> **布局迭代（v1.1.x）**：早期版本曾把项目级 MEMORY.md 放在 `.deepseek-harness/memory/MEMORY.md`（嵌套）；现已改为与 `memory/` **同级**（`.deepseek-harness/MEMORY.md`）。旧嵌套位置仍会被读取（向后兼容、不丢旧数据），但**写入一律走同级**。
 
 > **桥接规则**：`bridgeBuddyMemory` 开启时，只要项目里存在任一 buddy 记忆目录，就**只**读写这些目录，不再创建 `.deepseek-harness/memory/`；全部不存在时才回退到 dsh 目录。buddy 目录绝不被主动创建。
 
@@ -78,7 +80,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.1.4
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.2.0
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -87,7 +89,7 @@ dsh plugin --profile web add github:lovezi0/dsh-memory-palace
 git clone https://github.com/lovezi0/dsh-memory-palace.git
 cd dsh-memory-palace
 npm install
-npm run build        # src/ → lib/（纯复制，零外部构建依赖）
+npm run build        # src/ → lib/（服务端递归复制 + 客户端零依赖拼接，无外部构建依赖）
 dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实际配置调整）
 ```
 
@@ -106,7 +108,7 @@ dsh plugin --profile web remove dsh-memory-palace
 | 总开关 | `true` | 总开关，关闭后不注入、不写入 |
 | 用户级记忆路径 | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
 | 工作区记忆目录 | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
-| 日志保留天数 | `30` | 每日日志保留天数，过期蒸馏进 `MEMORY.md` |
+| 日志保留天数 | `30` | 每日日志保留天数，过期迁移进 `MEMORY.md` |
 | 用户级记忆字数上限 | `4000` | 注入系统提示词的用户级记忆长度上限（字符） |
 | 工作区级记忆字数上限 | `3000` | 注入系统提示词的工作区级记忆长度上限（字符） |
 | 桥接 Buddy 记忆 | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
@@ -121,7 +123,7 @@ dsh plugin --profile web remove dsh-memory-palace
 | 摘要模型 | `""`（空=复用当前会话模型） | 智能模式专用：留空自动复用当前会话 provider/model；填 `provider/model`（如 `deepseek/deepseek-chat`）固定廉价模型省 token |
 | 对话出错自动记录 | `true` | 插件模式下：自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；默认开启，**关闭无需重启 dsh**。智能模式下错误由 LLM 摘要统一提炼 |
 
-> **设置保存（v1.1.4 起）**：设置页保存已**真正落盘**——插件注册了自有同源 route `/memory-palace/api`（服务端 `ctx.webServer`），前端 fetch 该 route、服务端直写 settings-file（`settings.yaml` 出现 `memory-palace:` 段），不再依赖 dsh 的 `settingsScope`（非 loopback 连接下其 `set()` 是 no-op）与 apiproxy 的 allowlist。保存**无需重启**即热生效；切换记忆模式仍按提示重启 dsh 更稳妥。
+> **设置保存（v1.1.4 起）**：设置页保存已**真正落盘**
 >
 > 历史方案（仍可用作兜底）：直接在 profile 的 `cordis.patch.yml` 注入配置（id-targeted config override，与插件 bundle insert 的 id 一致）：
 >
@@ -141,11 +143,23 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
-- **1.1.4** — 智能模式摘要上线（LLM 智能会话摘要，与插件模式可切换）：摘要调用参考 dsh-sideband 加固（指令入 `system` 参数、`AbortSignal.timeout` 超时、`finish.kind` 细化）；修复设置-记忆保存不生效（自有同源 route `/memory-palace/api` 直写 settings-file，参考 dsh-better-sidebar，不动 harness）；修复长工具型任务不写记忆（turnBuffer 溢出误关闸门：上限 6k→30k、溢出保留尾部、闸门改 session 增量兜底）
-- **1.1.2** — 修复设置页「保存后自动切回插件模式」（save() 不再用保存前旧快照重置 draft）；说明 dsh web 端（非 loopback 连接）设置页保存为 memory 模式不落盘，关键配置请经 profile `cordis.patch.yml` 注入（见配置节）
-- **1.1.1** — 每日日志格式简化：文件头写当天日期（`# YYYY-MM-DD`），条目不再每条带时间戳（`[ERROR]`/`[smart]` 作条目前缀；旧文件自动补头）
-- **1.1.0** — 新增「智能模式」（LLM 智能会话摘要）：与插件模式在设置页切换、默认插件模式；智能模式经 `session.events` 增量提炼 summary→每日日志 + durable→MEMORY.md（带 `[smart]` 标记）；摘要模型默认复用当前会话、可固定；失败降级轻量条目不丢记忆；切换需重启 dsh
-- **1.0.0** — 防闲聊闸门 / 记忆公民指令 / 新增删除记忆工具
+- **1.2.0**
+    - 🔥会话标题栏【记忆】按钮
+    - 🔥手动蒸馏会话与项目记忆
+    - 🐛修复记忆预算注入无效
+    - 💪项目混合式模块化重构
+- **1.1.4**
+    - 🔥智能模式摘要上线
+- **1.1.2**
+    - 🐛修复记忆设置保存不生效的问题
+- **1.1.1**
+    - 💪每日日志格式简化
+- **1.1.0**
+    - 🔥新增「智能模式/插件模式」切换功能
+- **1.0.0**
+    - 🔥新增防闲聊闸门
+    - 🔥新增记忆公民指令
+    - 🔥新增删除记忆工具
 - **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
 
 ## 废弃方案
@@ -154,10 +168,10 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 参考与致谢
 
-v1.1 的智能模式与设置保存链路，深度参考了以下两个开源项目（本包实现为各自机制的简化落地，不含其完整功能）：
+本插件开发深度参考了以下两个开源项目（本包实现为各自机制的简化落地，不含其完整功能）：
 
-- **[dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)**（omdsh-dev）——设置**真保存**机制：插件自带同源 HTTP route + 服务端 `settings` 直写 settings-file，绕开 dsh `settingsScope`（非 loopback 下 `set()` no-op）与 apiproxy allowlist 两层限制，全程无需改动 harness。
-- **[dsh-sideband](https://github.com/ishuowang/dsh-sideband)**（ishuowang）——LLM 会话摘要的**调用范式**：摘要指令放 `system` 参数、`AbortSignal.timeout` 超时保护、`finish.kind` 细分（error/aborted/max-tokens）、流循环内中断检查。
+- **[dsh-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)**
+- **[dsh-sideband](https://github.com/ishuowang/dsh-sideband)**
 
 ## License
 

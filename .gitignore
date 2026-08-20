@@ -25,3 +25,6 @@ testdata/
 
 # 版本计划快照（按版本号归档，不进仓库，仅本地回归检索用）
 plans/
+
+# 升级计划
+upgrade plan/
