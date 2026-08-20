@@ -93,6 +93,19 @@ npm run build        # src/ → lib/（服务端递归复制 + 客户端零依�
 dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实际配置调整）
 ```
 
+方式三：通过 npm 安装（已发布到 npm registry，可走镜像加速）
+
+```bash
+# 直接由 dsh 从 npm 拉取并装入（本机若已配镜像会自动走镜像）
+dsh plugin --profile web add dsh-memory-palace
+# 锁定版本：
+dsh plugin --profile web add dsh-memory-palace@1.2.0
+
+# 或先手动用 npm 安装（显式指定镜像），再装入：
+npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
+dsh plugin --profile web add dsh-memory-palace
+```
+
 卸载：
 
 ```bash
@@ -143,6 +156,8 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.2.1**
+    - 💪package.json 补 `repository` 字段，关联 npm 包 ↔ GitHub 仓库（dshmarket 自动关联）
 - **1.2.0**
     - 🔥会话标题栏【记忆】按钮
     - 🔥手动蒸馏会话与项目记忆
