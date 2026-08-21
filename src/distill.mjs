@@ -13,6 +13,25 @@ import { appendLineDedup } from "./common/records.mjs";
 export function createDistill({ ctx, getConfig, paths, records, state }) {
   const cfg = () => getConfig();
 
+  // 模型解析（v1.2.3 修复）：summaryModel 存的是注册表 models[].id 原样（client 下拉 value = m.id），
+  // pi-ai getModel(provider, id) 按 model.id 全等匹配（pi-ai models.js: getModels(provider).find(m => m.id === id)），
+  // 所以 model 参数必须【原样直传】summaryModel——绝不能 split 拆段。v1.2.2 之前拆段把
+  // `nvidia/nemotron-3-ultra-550b-a55b` 变成裸 id `nemotron-3-ultra-550b-a55b`，全等匹配失败抛 UNKNOWN_MODEL。
+  // provider 取 summaryModel 首段（带前缀 id 的 route key，如 nvidia/nemotron-3-ultra-550b-a55b → nvidia）。
+  // summaryModel 为空 → 会话 requestHeader config 兜底（复用当前会话 provider/model，原样直传）。
+  // 边界：裸 id 格式（如 GLM-4.7-Flash，无 provider 前缀）首段取不到正确 provider → 需要
+  // ctx.llm.listProviders() 反查注册表；当前配置（nvidia 带前缀 / zai 裸 id）用首段即可，裸 id 场景暂不处理。
+  function resolveModel(summaryModel, session) {
+    const sm = (summaryModel || "").trim();
+    if (sm) {
+      const provider = sm.split("/")[0].trim();
+      if (provider) return { provider, model: sm };
+    }
+    const conf = session?.requestHeader?.()?.config;
+    if (conf && conf.provider && conf.model) return { provider: conf.provider, model: conf.model };
+    return null;
+  }
+
   // 项目蒸馏乐观锁：按目标 MEMORY.md 绝对路径防并发重复蒸馏。
   const distillLocks = new Set();
 
@@ -26,28 +45,13 @@ export function createDistill({ ctx, getConfig, paths, records, state }) {
       return { ok: false };
     }
     const c = cfg();
-    // 1. 模型解析：显式 summaryModel > 复用当前会话模型；皆缺 → 降级。
-    let provider;
-    let model;
-    const sm = (c.summaryModel || "").trim();
-    if (sm) {
-      const parts = sm.split("/");
-      if (parts.length === 2) {
-        provider = parts[0].trim();
-        model = parts[1].trim();
-      }
-    }
-    if (!provider || !model) {
-      const conf = session.requestHeader?.()?.config;
-      if (conf && conf.provider && conf.model) {
-        provider = conf.provider;
-        model = conf.model;
-      }
-    }
-    if (!provider || !model) {
+    // 1. 模型解析：summaryModel 原样直传（注册表 id）> 复用当前会话模型；皆缺 → 降级。
+    const resolved = resolveModel(c.summaryModel, session);
+    if (!resolved) {
       dbg("no model", { summaryModel: c.summaryModel, header: JSON.stringify(session.requestHeader?.()?.config) });
       return { ok: false };
     }
+    const { provider, model } = resolved;
     // 2. 输入：取 seq >= fromSeq 的 surface 事件，投影成模型视角 Message[]。
     const SURFACE = new Set(["user/message", "assistant/message", "tool/result"]);
     const newEvents = (session.events || []).filter(
@@ -173,27 +177,12 @@ export function createDistill({ ctx, getConfig, paths, records, state }) {
     if (distillLocks.has(memFile)) return { ok: false, message: "蒸馏正在进行中，请稍候再试。" };
     distillLocks.add(memFile);
     try {
-      // 模型解析：与 distillSessionCore 同序（summaryModel > 会话 requestHeader）。
-      let provider;
-      let model;
-      const sm = (c.summaryModel || "").trim();
-      if (sm) {
-        const parts = sm.split("/");
-        if (parts.length === 2) {
-          provider = parts[0].trim();
-          model = parts[1].trim();
-        }
-      }
-      if (!provider || !model) {
-        const conf = session?.requestHeader?.()?.config;
-        if (conf && conf.provider && conf.model) {
-          provider = conf.provider;
-          model = conf.model;
-        }
-      }
-      if (!provider || !model) {
+      // 模型解析：与 distillSessionCore 同序（summaryModel 原样直传 > 会话 requestHeader）。
+      const resolved = resolveModel(c.summaryModel, session);
+      if (!resolved) {
         return { ok: false, message: "无法确定蒸馏模型（summaryModel 未配置且会话无模型信息）。" };
       }
+      const { provider, model } = resolved;
 
       // LLM 蒸馏：system = 固化 DISTILL_PROMPT，user = MEMORY.md 全文。
       const timeoutMs = c.summaryTimeoutMs || 60000;

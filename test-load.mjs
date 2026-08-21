@@ -570,7 +570,24 @@ console.log("[S2] SMART MODE → summaryModel override");
   fire(s, captured, "turn/end", {});
   await sleep(1800);
   assert(mockLlm.calls.length >= 1, "[S2] llm called");
-  assert(mockLlm.calls[0].provider === "openai" && mockLlm.calls[0].model === "gpt-4o", "[S2] summaryModel override used");
+  // v1.2.3：model 参数必须原样直传 summaryModel（注册表 id），不得拆段
+  assert(mockLlm.calls[0].provider === "openai" && mockLlm.calls[0].model === "openai/gpt-4o", "[S2] summaryModel override used (model id verbatim)");
+}
+
+// ---------- 场景 S2b：智能模式 → 带 provider 前缀的 summaryModel（nvidia 双段 id 原样直传） ----------
+console.log("[S2b] SMART MODE → prefixed summaryModel id passes verbatim");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s2b-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", summaryModel: "nvidia/nemotron-3-ultra-550b-a55b" });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "分析" } });
+  fire(s, captured, "tool/result", { content: "x" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  assert(mockLlm.calls.length >= 1, "[S2b] llm called");
+  // v1.2.3 修复：provider 取首段，model 保持完整 id（不再拆成裸 id → UNKNOWN_MODEL）
+  assert(mockLlm.calls[0].provider === "nvidia", "[S2b] provider from first segment");
+  assert(mockLlm.calls[0].model === "nvidia/nemotron-3-ultra-550b-a55b", "[S2b] full prefixed model id passed verbatim");
 }
 
 // ---------- 场景 S3：智能模式 → 不做独立错误捕获（错误走摘要/降级） ----------

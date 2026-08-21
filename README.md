@@ -80,7 +80,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.2.0
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.2.2
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -99,7 +99,7 @@ dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实
 # 直接由 dsh 从 npm 拉取并装入（本机若已配镜像会自动走镜像）
 dsh plugin --profile web add dsh-memory-palace
 # 锁定版本：
-dsh plugin --profile web add dsh-memory-palace@1.2.0
+dsh plugin --profile web add dsh-memory-palace@1.2.2
 
 # 或先手动用 npm 安装（显式指定镜像），再装入：
 npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
@@ -156,8 +156,10 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.2.2**
+    - 🐛修复智能模式自定义摘要模型不生效的问题
 - **1.2.1**
-    - 💪package.json 补 `repository` 字段，关联 npm 包 ↔ GitHub 仓库（dshmarket 自动关联）
+    - 💪发布npm
 - **1.2.0**
     - 🔥会话标题栏【记忆】按钮
     - 🔥手动蒸馏会话与项目记忆
