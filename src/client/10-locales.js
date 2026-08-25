@@ -50,7 +50,12 @@
       distilling: "蒸馏中…",
       notifySessionDone: "会话记忆蒸馏完成",
       notifyProjectDone: "项目记忆蒸馏完成",
-      notifyFail: "记忆蒸馏失败"
+      notifyFail: "记忆蒸馏失败",
+      distillDebugLogLabel: "蒸馏调试日志",
+      distillDebugLogHint: "开启后向 dsh 服务端控制台（stderr）输出蒸馏 LLM 调用诊断，仅排障用，平时关闭。",
+      dev: "开发",
+      distillTimeoutLabel: "蒸馏超时（秒）",
+      distillTimeoutHint: "单次蒸馏 LLM 调用的超时上限（秒）；超时视为失败并降级。覆盖智能模式摘要与手动蒸馏，默认 60 秒。"
     };
 
     const en = {
@@ -105,5 +110,10 @@
       distilling: "Distilling…",
       notifySessionDone: "Session memory distilled",
       notifyProjectDone: "Project memory distilled",
-      notifyFail: "Memory distillation failed"
+      notifyFail: "Memory distillation failed",
+      distillDebugLogLabel: "Distill debug log",
+      distillDebugLogHint: "When on, prints distill LLM call diagnostics to the dsh server console (stderr). For troubleshooting only; keep off normally.",
+      dev: "Developer",
+      distillTimeoutLabel: "Distill timeout (s)",
+      distillTimeoutHint: "Timeout (in seconds) for a single distill LLM call; on timeout it fails and degrades. Covers both smart-mode summary and manual distillation. Default 60s."
     };

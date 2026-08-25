@@ -360,8 +360,15 @@ export function registerTools({ ctx, getConfig, paths, records, state }) {
   // （即删除用户记忆时你看到的「沙箱授权弹窗」）——比两阶段的 AI 级 confirm:true 更可靠：
   // 即便模型误传 confirm:true，没有真人点击弹窗允许也绝不会真正删除。
   // 预览（confirm 省略或为 false）直接放行、不弹窗，由 execute 返回候选供 AI 转述、供用户选择删哪几条。
+  // 计划模式禁写（硬编码默认，无开关）：三个写工具统一 deny（连预览/确认都拦），仅禁写不禁读。
+  const WRITE_TOOLS = new Set(["memory_note", "memory_note_user", "memory_delete"]);
   ctx.on("tools/pre-execute", async (exec, next) => {
-    if (exec?.name !== "memory_delete") return next();
+    const name = exec?.name;
+    // plan 模式禁写：三个写工具一律 deny，连预览/确认都拦
+    if (state.planModeActive && WRITE_TOOLS.has(name)) {
+      return { kind: "deny", reason: "plan 模式下禁止写入记忆" };
+    }
+    if (name !== "memory_delete") return next();
     const a = (exec.arguments && typeof exec.arguments === "object") ? exec.arguments : {};
     const confirm = a.confirm === true;
     if (!confirm) return next(); // 预览阶段：只查不删，无需弹窗

@@ -87,7 +87,10 @@
             if (FIELD_BOOL.has(field)) {
               section[field] = text === "true";
             } else if (FIELD_NUMERIC.has(field)) {
-              if (text !== "") section[field] = Number(text);
+              if (text !== "") {
+                const n = Number(text);
+                section[field] = field === "summaryTimeoutMs" ? n * 1000 : n;
+              }
             } else if (field === "buddyWorkspaceMemoryDirs") {
               section[field] = text.split(",").map((s) => s.trim()).filter(Boolean);
             } else {
@@ -127,6 +130,7 @@
             type: "checkbox",
             checked: draft[field] === "true",
             disabled: disabled || disabledOverride,
+            style: checkboxStyle,
             onChange: (e) => edit(field, e.target.checked ? "true" : "false")
           })
         ]);
@@ -153,6 +157,23 @@
         padding: "0 12px",
         fontSize: "13px",
         lineHeight: "1.5"
+      };
+      const selectStyle = {
+        ...inputStyle,
+        height: "34px",
+        appearance: "none",
+        WebkitAppearance: "none",
+        backgroundImage: "url(data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E)",
+        backgroundPosition: "right 12px center",
+        backgroundRepeat: "no-repeat",
+        backgroundSize: "12px 12px",
+        paddingRight: "32px"
+      };
+      const checkboxStyle = {
+        width: "15px",
+        height: "15px",
+        margin: "0",
+        accentColor: "var(--dsw-alias-brand-primary, #4b5bff)"
       };
       const toggleStyle = {
         display: "flex",
@@ -275,6 +296,7 @@
               type: "checkbox",
               checked: draft.bridgeBuddyMemory === "true",
               disabled,
+              style: checkboxStyle,
               onChange: (e) => edit("bridgeBuddyMemory", e.target.checked ? "true" : "false")
             })
           ]),
@@ -292,7 +314,7 @@
               value: draft.memoryMode === "smart" ? "smart" : "plugin",
               disabled,
               onChange: (e) => edit("memoryMode", e.target.value),
-              style: { ...inputStyle, height: "34px" }
+              style: selectStyle
             }, [
               h("option", { value: "plugin" }, "插件模式"),
               h("option", { value: "smart" }, "智能模式")
@@ -304,6 +326,7 @@
                   // 避免 select 显示悬空值、保存时又把脏值写回 settings.yaml。
                   value: modelOptions.some((o) => o.value === draft.summaryModel) ? draft.summaryModel : "",
                   disabled,
+                  style: selectStyle,
                   onChange: (e) => edit("summaryModel", e.target.value)
                 }, [
                   h("option", { value: "" }, "复用当前会话模型"),
@@ -321,6 +344,11 @@
           row(t("retentionLabel"), t("retentionHint"), h("input", num("dailyLogRetentionDays")), "dailyLogRetentionDays"),
           row(t("userBudgetLabel"), t("userBudgetHint"), h("input", num("userBudgetChars")), "userBudgetChars"),
           row(t("wsBudgetLabel"), t("wsBudgetHint"), h("input", num("workspaceBudgetChars")), "workspaceBudgetChars")
+        ]),
+        h("div", { style: cardStyle }, [
+          h("p", { style: groupTitleStyle }, t("dev")),
+          row(t("distillTimeoutLabel"), t("distillTimeoutHint"), h("input", num("summaryTimeoutMs")), "summaryTimeoutMs"),
+          toggle(t("distillDebugLogLabel"), t("distillDebugLogHint"), "distillDebugLog")
         ])
       ]);
     }

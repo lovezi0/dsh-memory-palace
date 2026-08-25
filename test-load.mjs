@@ -3,6 +3,9 @@
 // 运行（Windows 静默环境）：/usr/bin/env -u NODE_OPTIONS node test-load.mjs
 import { Context } from "@deepseek-ai/cordis";
 import { name, apply, Config, inject } from "./lib/index.js";
+import { createPaths } from "./lib/common/paths.mjs";
+import { createRecords } from "./lib/common/records.mjs";
+import { createDistill } from "./lib/distill.mjs";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
@@ -21,6 +24,7 @@ const BASE = {
   memoryMode: "plugin",
   summaryModel: "",
   autoCaptureErrors: true,
+  distillDebugLog: false,
 };
 
 let pass = 0;
@@ -729,6 +733,159 @@ console.log("[W] local-date daily file + runtime-context noise stripped");
   const text = readFileSync(daily, "utf8");
   assert(!text.includes("Current runtime context"), "[W] runtime-context noise stripped");
   assert(text.includes("已完成统计"), "[W] real assistant text kept");
+}
+
+// ---------- 场景 S8：调试模式开 → 自动蒸馏（会话）输出 [debug] 诊断 ----------
+console.log("[S8] DEBUG LOG ON → session distill diagnostics");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s8-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", distillDebugLog: true });
+  const s = fakeSession(ws);
+  const errs = [];
+  const origErr = console.error;
+  console.error = (...a) => errs.push(a.map(String).join(" "));
+  fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
+  fire(s, captured, "tool/result", { content: "src/index.mjs" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  console.error = origErr;
+  assert(mockLlm.calls.length >= 1, "[S8] llm called (functionality intact)");
+  assert(errs.some((e) => e.includes("[memory-palace][debug]")), "[S8] debug tag emitted");
+  assert(errs.some((e) => e.includes("resolveModel")), "[S8] resolveModel logged");
+  assert(errs.some((e) => e.includes("session core entry")), "[S8] session core entry logged");
+  assert(errs.some((e) => e.includes("session stream done")), "[S8] session stream done logged");
+  assert(errs.some((e) => e.includes("session write done")), "[S8] session write done logged");
+}
+
+// ---------- 场景 S8b：调试模式开 → 项目蒸馏（按钮）输出 [debug] 诊断 ----------
+console.log("[S8b] DEBUG ON → project distill diagnostics");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s8b-"));
+  const memFile = join(ws, ".deepseek-harness", "MEMORY.md");
+  const fsMod = await import("node:fs/promises");
+  const pathMod = await import("node:path");
+  await fsMod.mkdir(pathMod.dirname(memFile), { recursive: true });
+  await fsMod.writeFile(memFile, "# 项目记忆\n- 旧事实一\n- 旧事实二\n", "utf8");
+  const mockLlm = makeMockLlm({ text: "## 蒸馏后\n- 事实 A\n- 事实 B\n" });
+  const ctx8 = new Context();
+  ctx8.provide("llm", mockLlm);
+  const cfg = { ...BASE, distillDebugLog: true, enabled: true };
+  const state8 = { activeCwd: ws };
+  const paths8 = createPaths(() => cfg, () => ws);
+  const records8 = createRecords({ getConfig: () => cfg, paths: paths8 });
+  const distill8 = createDistill({ ctx: ctx8, getConfig: () => cfg, paths: paths8, records: records8, state: state8 });
+  const s = fakeSession(ws);
+  const errs = [];
+  const origErr = console.error;
+  console.error = (...a) => errs.push(a.map(String).join(" "));
+  const r = await distill8.distillProjectMemory(ws, s);
+  console.error = origErr;
+  assert(r.ok, "[S8b] project distill succeeded");
+  assert(errs.some((e) => e.includes("[memory-palace][debug]")), "[S8b] debug tag emitted");
+  assert(errs.some((e) => e.includes("project request")), "[S8b] project request logged");
+  assert(errs.some((e) => e.includes("project write done")), "[S8b] project write done logged");
+  const memText = readFileSync(memFile, "utf8");
+  assert(memText.includes("事实 A"), "[S8b] MEMORY.md updated by distill");
+}
+
+// ---------- 场景 S9：调试模式关 → 无 [debug]，但失败留痕 [distill skip:] 仍在 ----------
+console.log("[S9] DEBUG OFF → no [debug], failure skip retained");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s9-"));
+  const { captured } = await loadPlugin({ memoryMode: "smart", distillDebugLog: false }, { fail: true });
+  const s = fakeSession(ws);
+  const errs = [];
+  const origErr = console.error;
+  console.error = (...a) => errs.push(a.map(String).join(" "));
+  fire(s, captured, "user/message", { message: { content: "分析" } });
+  fire(s, captured, "tool/result", { content: "x" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  console.error = origErr;
+  assert(!errs.some((e) => e.includes("[memory-palace][debug]")), "[S9] no [debug] lines when off");
+  assert(errs.some((e) => e.includes("[memory-palace] distill skip:")), "[S9] failure skip line retained");
+}
+
+// ---------- 场景 P：计划模式禁写记忆（硬默认，无开关） ----------
+console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt");
+{
+  // P1/P2：plan 下三个写工具经 pre-execute 网关 deny（连预览/确认都拦）
+  const { captured } = await loadPlugin();
+  const s = fakeSession(mkdtempSync(join(tmpdir(), "mem-p-")));
+  fire(s, captured, "plan/mode", { active: true });
+  const gate = captured.listeners["tools/pre-execute"][0];
+  const next = async () => ({ kind: "allow" });
+  assert((await gate({ name: "memory_note", arguments: { content: "x" } }, next)).kind === "deny", "[P1] plan: memory_note denied by gate");
+  assert((await gate({ name: "memory_note_user", arguments: { content: "x" } }, next)).kind === "deny", "[P1] plan: memory_note_user denied by gate");
+  assert((await gate({ name: "memory_delete", arguments: { match: "x", level: "project" } }, next)).kind === "deny", "[P2] plan: memory_delete preview denied");
+  assert((await gate({ name: "memory_delete", arguments: { match: "x", level: "project", confirm: true } }, next)).kind === "deny", "[P2] plan: memory_delete confirm denied");
+
+  // P3：plugin 模式 turn/end 在 plan 下不写日志
+  const ws3 = mkdtempSync(join(tmpdir(), "mem-p3-"));
+  const { captured: cap3 } = await loadPlugin();
+  const s3 = fakeSession(ws3);
+  fire(s3, cap3, "plan/mode", { active: true });
+  fire(s3, cap3, "user/message", { message: { content: "分析仓库结构" } });
+  fire(s3, cap3, "tool/result", { content: "src/x" });
+  fire(s3, cap3, "turn/end", {});
+  await sleep(1800);
+  assert(!existsSync(dailyFile(ws3)), "[P3] plan: no daily log written (auto write blocked)");
+
+  // P4：smart 模式 turn/end 在 plan 下不调 LLM（自动蒸馏被 _settle 早返回拦截）
+  const ws4 = mkdtempSync(join(tmpdir(), "mem-p4-"));
+  const { captured: cap4, mockLlm: ml4 } = await loadPlugin({ memoryMode: "smart" });
+  const s4 = fakeSession(ws4);
+  fire(s4, cap4, "plan/mode", { active: true });
+  fire(s4, cap4, "user/message", { message: { content: "分析" } });
+  fire(s4, cap4, "tool/result", { content: "x" });
+  fire(s4, cap4, "turn/end", {});
+  await sleep(1800);
+  assert(ml4.calls.length === 0, "[P4] plan: smart auto-distill not called (blocked at _settle)");
+
+  // P5：plan 关闭后行为正常（回归，不破坏写盘）
+  const ws5 = mkdtempSync(join(tmpdir(), "mem-p5-"));
+  const { captured: cap5 } = await loadPlugin();
+  const s5 = fakeSession(ws5);
+  fire(s5, cap5, "plan/mode", { active: false });
+  fire(s5, cap5, "user/message", { message: { content: "分析仓库结构" } });
+  fire(s5, cap5, "tool/result", { content: "src/x" });
+  fire(s5, cap5, "turn/end", {});
+  await sleep(1800);
+  assert(existsSync(dailyFile(ws5)), "[P5] plan=false: daily log written again (no regression)");
+
+  // P6：plan 下 memory_read 仍可用（仅禁写不禁读）
+  const ws6 = mkdtempSync(join(tmpdir(), "mem-p6-"));
+  const memDir6 = join(ws6, ".workbuddy", "memory");
+  mkdirSync(memDir6, { recursive: true });
+  const fs6 = await import("node:fs/promises");
+  await fs6.writeFile(join(memDir6, `${localDate(new Date())}.md`), "# 今日\n- 约定A\n", "utf8");
+  const { captured: cap6 } = await loadPlugin();
+  const s6 = fakeSession(ws6);
+  fire(s6, cap6, "plan/mode", { active: true });
+  const readTool = cap6.tools.find((t) => t.name === "memory_read");
+  const res6 = await readTool.execute({});
+  assert(res6.ok && res6.memory.includes("约定A"), "[P6] plan: memory_read still works");
+
+  // P7：plan 下手动蒸馏（distillProjectMemory）豁免，仍写盘（真人显式意图）
+  const ws7 = mkdtempSync(join(tmpdir(), "mem-p7-"));
+  const memFile7 = join(ws7, ".deepseek-harness", "MEMORY.md");
+  const fs7 = await import("node:fs/promises");
+  const path7 = await import("node:path");
+  await fs7.mkdir(path7.dirname(memFile7), { recursive: true });
+  await fs7.writeFile(memFile7, "# 项目记忆\n- 旧事实\n", "utf8");
+  const mockLlm7 = makeMockLlm({ text: "## 蒸馏后\n- 事实 Z\n" });
+  const ctx7 = new Context();
+  ctx7.provide("llm", mockLlm7);
+  const cfg7 = { ...BASE, distillDebugLog: false, enabled: true };
+  const state7 = { activeCwd: ws7, planModeActive: true };
+  const paths7 = createPaths(() => cfg7, () => ws7);
+  const records7 = createRecords({ getConfig: () => cfg7, paths: paths7 });
+  const distill7 = createDistill({ ctx: ctx7, getConfig: () => cfg7, paths: paths7, records: records7, state: state7 });
+  const s7 = fakeSession(ws7);
+  const r7 = await distill7.distillProjectMemory(ws7, s7);
+  assert(r7.ok, "[P7] plan: manual distill still writes (exempt)");
+  const memText7 = readFileSync(memFile7, "utf8");
+  assert(memText7.includes("事实 Z"), "[P7] plan: MEMORY.md updated by manual distill");
 }
 
 console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);

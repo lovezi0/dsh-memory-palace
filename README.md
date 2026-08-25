@@ -1,10 +1,9 @@
-# dsh-memory-palace
+# dsh-memory-palace <img src="assets/memory-icon.svg" width="36" height="36" alt="dsh-memory-palace" />
+---
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-
-记忆就是普通文本文件，用记事本就能改。AI 每轮对话把它读进上下文，对话结束后把新内容追加进日志——不依赖任何私有格式、不落 JSON、不锁数据。
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
 ## 特性
 
@@ -80,7 +79,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.2.3
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.3.0
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -99,7 +98,7 @@ dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实
 # 直接由 dsh 从 npm 拉取并装入（本机若已配镜像会自动走镜像）
 dsh plugin --profile web add dsh-memory-palace
 # 锁定版本：
-dsh plugin --profile web add dsh-memory-palace@1.2.3
+dsh plugin --profile web add dsh-memory-palace@1.3.0
 
 # 或先手动用 npm 安装（显式指定镜像），再装入：
 npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
@@ -156,6 +155,11 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.3.0**
+    - 🔥新增计划模式禁止写入记忆
+    - 💪设置-记忆控件样式优化 *使用dsh原生样式*
+    - 💪清理重复patch信息
+    - 🔥增加调试模式 *默认关闭，仅用于智能模式蒸馏失败输出调试信息*
 - **1.2.3**
 - **1.2.2**
     - 🐛修复智能模式自定义摘要模型不生效的问题
@@ -179,10 +183,6 @@ dsh plugin --profile web remove dsh-memory-palace
     - 🔥新增记忆公民指令
     - 🔥新增删除记忆工具
 - **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
-
-## 废弃方案
-
-插件侧 LLM 自动摘要（`ctx.llm.stream()` 路线）曾在 v0.7.1 因 4 个契约/时机坑废弃；**v1.1.0 已重新论证并以「智能模式」可选形态复活**——经 `session.events` / `deriveEventMessage` / `requestHeader()?.config` 根除旧坑，默认仍为插件模式。见 [废弃方案：为什么不用 LLM 自动摘要](./ABANDONED-LLM-SUMMARY.md)。
 
 ## 参考与致谢
 

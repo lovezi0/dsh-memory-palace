@@ -52,7 +52,8 @@ export const Config = Schema.object({
   // ---- v1.1.0：双记忆模式（插件模式=现状；智能模式=LLM 智能会话摘要），设置页切换，互斥，切换需重启 dsh ----
   memoryMode: Schema.union(["plugin", "smart"]).default("plugin").description("记忆模式：plugin=记忆公民指令+轮次轻量+错误捕获；smart=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md，带 [smart] 标记）。切换需重启 dsh 生效。"),
   summaryModel: Schema.string().default("").description("智能模式的摘要模型，留空=复用当前会话 provider/model；也可填 provider/model（如 deepseek/deepseek-chat）固定廉价模型省 token。"),
-  summaryTimeoutMs: Schema.number().default(60000).description("智能模式单次摘要调用的超时（毫秒），超时视为失败并降级轻量条目；默认 60s。"),
+  summaryTimeoutMs: Schema.number().default(60000).description("蒸馏 LLM 调用的超时（毫秒），超时视为失败并降级；覆盖智能模式摘要与手动蒸馏两条链路；默认 60000（60s）。"),
+  distillDebugLog: Schema.boolean().default(false).description("调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断日志（模型解析、请求参数、流进度计数、错误详情）。仅排障用，平时关闭；开启后也不打印任何对话内容或记忆文本。"),
 });
 
 export const inject = ["systemPrompt", "tools", "llm", "webServer", "webRuntime"];
@@ -103,6 +104,7 @@ export function apply(ctx, config) {
     settleTimer: null,        // debounce 计时器
     lastSummarizedSeq: -1,    // 智能模式增量摘要断点（session 事件 seq）
     summarySessionId: null,
+    planModeActive: false,    // 计划模式：禁写记忆（硬编码默认，无开关；仅经 session/event 的 plan/mode 翻转；未装 dsh-plan-mode 永不触发=不拦截）
   };
   const TURN_BUFFER_MAX = 30;
   // v1.1.3：字符上限提升到 30k（长工具型 request 的工具结果动辄数千字符，6k 上限会触发
@@ -131,6 +133,11 @@ export function apply(ctx, config) {
       state.lastSummarizedSeq = session.firstLiveSeq;
     }
     const type = event?.type;
+    // 计划模式：禁写记忆（硬编码默认行为，无开关；不依赖 dsh-plan-mode 服务，未装则永不触发=安全降级=不拦截）
+    if (type === "plan/mode") {
+      state.planModeActive = !!(event?.data?.active);
+      return;
+    }
     if (type === "user/message" || type === "assistant/message" || type === "tool/result") {
       const text = extractText(event);
       if (text) {
@@ -204,13 +211,20 @@ export function apply(ctx, config) {
         : "你拥有持久化、人类可直接编辑的 Markdown 记忆文件（位于 ~/.deepseek-harness/MEMORY.md，以及各项目的 .deepseek-harness/MEMORY.md（长期记忆）与 .deepseek-harness/memory/（每日日志））。" +
           "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
           antiMangle + proactive;
-      return blocks.length ? [intro, ...blocks].join("\n\n") : intro;
+      // 计划模式禁写提示（硬编码默认行为，无开关）：无论记忆模式都追加，让 agent 自觉不写（网关物理兜底仍生效）
+      const planNote = state.planModeActive
+        ? "\n\n[plan 模式] 当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取记忆用 memory_read，仍可用）。"
+        : "";
+      const introFull = intro + planNote;
+      return blocks.length ? [introFull, ...blocks].join("\n\n") : introFull;
     },
   });
 
   // ---------- 结算一个完整 request：基于累积缓冲做「错误捕获 + 轻量兜底记录（闸门）」，不调 LLM ----------
   // 主路径是 agent 按记忆公民指令主动调 memory_note；此处只兜底保证"实质轮次不丢"。
   async function _settle(capturedTurn, isError, errMsg) {
+    // 计划模式禁写（硬编码默认，无开关）：自动写路径全拦截（智能模式/轻量兜底/错误捕获同源跳过）
+    if (state.planModeActive) return;
     const cfg = source();
     if (!cfg.enabled) return;
     const dirs = paths.writeDirs();

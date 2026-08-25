@@ -1,5 +1,5 @@
-    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars"]);
-    const FIELD_BOOL = new Set(["bridgeBuddyMemory", "summarize", "autoCaptureErrors"]);
+    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs"]);
+    const FIELD_BOOL = new Set(["bridgeBuddyMemory", "summarize", "autoCaptureErrors", "distillDebugLog"]);
 
     function projectDraft(snap) {
       const v = snap && snap.value ? snap.value : {};
@@ -13,6 +13,8 @@
         workspaceBudgetChars: v.workspaceBudgetChars != null ? String(v.workspaceBudgetChars) : "3000",
         summarize: v.summarize === false ? "false" : "true",
         autoCaptureErrors: v.autoCaptureErrors === false ? "false" : "true",
+        distillDebugLog: v.distillDebugLog === false ? "false" : "true",
+        summaryTimeoutMs: v.summaryTimeoutMs != null ? String(Math.round((Number(v.summaryTimeoutMs) || 0) / 1000)) : "60",
         memoryMode: v.memoryMode || "plugin",
         summaryModel: v.summaryModel || ""
       };
