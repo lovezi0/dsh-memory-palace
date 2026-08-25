@@ -38,6 +38,14 @@ function assert(cond, label) {
 function makeMockLlm(opts = {}) {
   const text = opts.text !== undefined ? opts.text : '{"summary":"[SUMMARY]","durable":[]}';
   const fail = !!opts.fail;
+  // v1.2.3：注册表 mock——provider → model id 列表（供 resolveModel 反查裸 id 归属）。
+  // 默认覆盖三个典型：带前缀 id（nvidia）、裸 id（xiaomi/zai）、双段自定义（openai）。
+  const registry = opts.registry || {
+    nvidia: ["nvidia/nemotron-3-ultra-550b-a55b", "z-ai/glm-5.2"],
+    xiaomi: ["mimo-v2.5", "mimo-v2.5-pro"],
+    zai: ["GLM-4.7-Flash", "GLM-4.6V-Flash"],
+    openai: ["openai/gpt-4o"],
+  };
   return {
     calls: [],
     // 注意：必须【同步】返回 async iterable（与真机 LlmRuntime.stream 契约一致，
@@ -56,6 +64,13 @@ function makeMockLlm(opts = {}) {
         };
       }
       return gen();
+    },
+    // v1.2.3：注册表枚举接口（resolveModel 反查依赖）。
+    listProviders() {
+      return Object.keys(registry).map((id) => ({ id, name: id }));
+    },
+    async listModels(provider) {
+      return (registry[provider] || []).map((id) => ({ provider, id, name: id }));
     },
   };
 }
@@ -588,6 +603,22 @@ console.log("[S2b] SMART MODE → prefixed summaryModel id passes verbatim");
   // v1.2.3 修复：provider 取首段，model 保持完整 id（不再拆成裸 id → UNKNOWN_MODEL）
   assert(mockLlm.calls[0].provider === "nvidia", "[S2b] provider from first segment");
   assert(mockLlm.calls[0].model === "nvidia/nemotron-3-ultra-550b-a55b", "[S2b] full prefixed model id passed verbatim");
+}
+
+// ---------- 场景 S2c：智能模式 → 裸 id summaryModel（mimo-v2.5）经注册表反查归属 provider ----------
+console.log("[S2c] SMART MODE → bare summaryModel id resolved via registry");
+{
+  const ws = mkdtempSync(join(tmpdir(), "mem-s2c-"));
+  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", summaryModel: "mimo-v2.5" });
+  const s = fakeSession(ws);
+  fire(s, captured, "user/message", { message: { content: "分析" } });
+  fire(s, captured, "tool/result", { content: "x" });
+  fire(s, captured, "turn/end", {});
+  await sleep(1800);
+  assert(mockLlm.calls.length >= 1, "[S2c] llm called");
+  // v1.2.3 修复：裸 id 经 listProviders+listModels 反查 → provider 为 xiaomi，model 保持原样
+  assert(mockLlm.calls[0].provider === "xiaomi", "[S2c] bare id resolved to owning provider via registry");
+  assert(mockLlm.calls[0].model === "mimo-v2.5", "[S2c] bare model id passed verbatim");
 }
 
 // ---------- 场景 S3：智能模式 → 不做独立错误捕获（错误走摘要/降级） ----------
