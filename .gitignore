@@ -28,3 +28,6 @@ plans/
 
 # 升级计划
 upgrade plan/
+
+# Agent 开发指南（含本机私有路径，不开源）
+AGENTS.md
