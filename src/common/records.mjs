@@ -75,6 +75,85 @@ export async function removeLineByMatch(file, match) {
   return { removed, ok: true, reason: "done", lines: removedLines };
 }
 
+// 全文逐行编号读取（v1.4.0 特性3：回喂存量记忆）。返回 { lines:[{n,raw,structural}], text }。
+// 行号 n 与文件实际行一一对应（1 起），供 LLM 通过 line 引用；text 为每行 `n|raw` 拼接，直接喂模型。
+// 不截断、无字符预算（用户明确要求全量回喂，避免截断导致记忆错误）。
+export function readNumberedMemory(file) {
+  let cur = "";
+  try {
+    cur = readFileSync(file, "utf8");
+  } catch {
+    return { lines: [], text: "" };
+  }
+  if (!cur) return { lines: [], text: "" };
+  const lines = cur.split("\n").map((raw, i) => {
+    const t = raw.trim();
+    return { n: i + 1, raw, structural: isStructural(t) };
+  });
+  const text = lines.map((l) => `${l.n}|${l.raw}`).join("\n");
+  return { lines, text };
+}
+
+// 基于编号现有记忆的增量维护操作（v1.4.0 特性3）。op 之一：
+//   - add：追加一行（text/newText，去重）；scope 由 caller 决定目标文件。
+//   - replace：替换第 line 行（写前重读 + normLine(oldText) 精确匹配校验，防 stale 行号误改）。
+//   - delete：删除第 line 行（结构行 / 未匹配 oldText 均拒绝）。
+// 写前重读（re-read before write）保证基于最新文件内容，避免并发/重试导致的 stale 行号错位。
+// 返回 { ok, reason, changed, line?, removed?, actual? }
+export async function applyMemoryOp(file, op) {
+  const o = op || {};
+  await mkdir(dirname(file), { recursive: true });
+  let cur = "";
+  try {
+    cur = readFileSync(file, "utf8");
+  } catch {
+    /* 文件尚不存在 */
+  }
+  const lines = cur.split("\n");
+  const normRaw = (s) => normLine((s || "").trim());
+
+  if (o.op === "add") {
+    const text = (o.text ?? o.newText ?? "").trim();
+    if (!text) return { ok: false, reason: "empty-add" };
+    if (cur && normRaw(cur).includes(normRaw(text))) return { ok: true, reason: "dup", changed: false };
+    const base = cur && !cur.endsWith("\n") ? cur + "\n" : cur;
+    await writeFile(file, `${base}${text}\n`, "utf8");
+    return { ok: true, reason: "added", changed: true };
+  }
+
+  if (o.op !== "replace" && o.op !== "delete") {
+    return { ok: false, reason: "unknown-op", op: o.op };
+  }
+
+  const n = o.line;
+  if (!Number.isInteger(n) || n < 1 || n > lines.length) {
+    return { ok: false, reason: "bad-line", line: n, totalLines: lines.length };
+  }
+  const idx = n - 1;
+  const rawLine = lines[idx];
+  const trimmed = rawLine.trim();
+  if (isStructural(trimmed)) {
+    return { ok: false, reason: "structural-protected", line: n };
+  }
+  // 写前重读后精确匹配：确保操作基于最新内容（防止 stale 行号导致误改/误删）。
+  const oldNorm = normRaw(o.oldText);
+  if (oldNorm && normRaw(rawLine) !== oldNorm) {
+    return { ok: false, reason: "conflict", line: n, expected: o.oldText, actual: trimmed };
+  }
+
+  if (o.op === "delete") {
+    const newLines = lines.slice(0, idx).concat(lines.slice(idx + 1));
+    await writeFile(file, newLines.join("\n"), "utf8");
+    return { ok: true, reason: "deleted", changed: true, line: n, removed: trimmed };
+  }
+  // replace
+  const newText = (o.newText ?? "").trim();
+  if (!newText) return { ok: false, reason: "empty-replace" };
+  lines[idx] = newText;
+  await writeFile(file, lines.join("\n"), "utf8");
+  return { ok: true, reason: "replaced", changed: true, line: n };
+}
+
 // 读取目录下最近的非今日每日日志日期（最多 limit 份，降序）。供删除范围圈定。
 export async function recentLogDates(dir, limit = 3) {
   let files = [];

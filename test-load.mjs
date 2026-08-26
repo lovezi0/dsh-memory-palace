@@ -4,8 +4,9 @@
 import { Context } from "@deepseek-ai/cordis";
 import { name, apply, Config, inject } from "./lib/index.js";
 import { createPaths } from "./lib/common/paths.mjs";
-import { createRecords } from "./lib/common/records.mjs";
+import { createRecords, readNumberedMemory, applyMemoryOp } from "./lib/common/records.mjs";
 import { createDistill } from "./lib/distill.mjs";
+import { classifyFailure, backoffDelayMs, runWithRetry, RETRY_CONSTANTS } from "./lib/common/retry.mjs";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
@@ -42,6 +43,11 @@ function assert(cond, label) {
 function makeMockLlm(opts = {}) {
   const text = opts.text !== undefined ? opts.text : '{"summary":"[SUMMARY]","durable":[]}';
   const fail = !!opts.fail;
+  // v1.4.0：可重试失败模拟——前 failTimes 次返回 finish.kind='error'（带 failStatus），之后成功；
+  // failForever + failStatus = 每次都返回该状态错误（用于验证重试耗尽 / 500 单独限次）。
+  const failStatus = opts.failStatus;
+  const failTimes = opts.failTimes || 0;
+  const failForever = !!opts.failForever;
   // v1.2.3：注册表 mock——provider → model id 列表（供 resolveModel 反查裸 id 归属）。
   // 默认覆盖三个典型：带前缀 id（nvidia）、裸 id（xiaomi/zai）、双段自定义（openai）。
   const registry = opts.registry || {
@@ -56,9 +62,19 @@ function makeMockLlm(opts = {}) {
     // 见 packages/llm/llm/src/index.ts:913）；若写成 async 方法会返回 Promise，插件的
     // `for await` 迭代 Promise 抛 TypeError → 摘要降级 → 测试掩盖真机行为。
     stream(o) {
+      const idx = this.calls.length;
       this.calls.push(o);
+      const isFailCall = failForever || (failStatus != null && idx < failTimes);
       async function* gen() {
         if (fail) throw new Error("mock llm failure");
+        if (isFailCall) {
+          yield { type: "block-start", index: 0, blockType: "text" };
+          yield {
+            type: "finish",
+            reason: { kind: "error", failure: { status: failStatus, message: "mock " + failStatus } },
+          };
+          return;
+        }
         yield { type: "block-start", index: 0, blockType: "text" };
         yield { type: "text-delta", index: 0, text };
         yield { type: "block-end", index: 0, block: { type: "text", text } };
@@ -886,6 +902,262 @@ console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt
   assert(r7.ok, "[P7] plan: manual distill still writes (exempt)");
   const memText7 = readFileSync(memFile7, "utf8");
   assert(memText7.includes("事实 Z"), "[P7] plan: MEMORY.md updated by manual distill");
+}
+
+// ---------- 场景 R：蒸馏 LLM 失败重试（v1.4.0 特性2） ----------
+console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
+{
+  // R-UNIT：classifyFailure 分类
+  assert(classifyFailure({ status: 500 }).kind === "retryable", "[R] classify 500=retryable");
+  assert(classifyFailure({ status: 503 }).kind === "retryable", "[R] classify 503=retryable");
+  assert(classifyFailure({ status: 429 }).kind === "limited", "[R] classify 429=limited");
+  assert(classifyFailure({ status: 401 }).kind === "fatal", "[R] classify 401=fatal");
+  assert(classifyFailure({ status: 404 }).kind === "fatal", "[R] classify 404=fatal");
+  assert(classifyFailure({ code: "ECONNRESET" }).kind === "retryable", "[R] classify ECONNRESET=retryable");
+  assert(classifyFailure({ name: "AbortError" }).kind === "retryable", "[R] classify AbortError=retryable");
+  assert(classifyFailure({ message: "request aborted by timeout" }).kind === "retryable", "[R] classify aborted msg=retryable");
+  assert(classifyFailure({}).kind === "fatal", "[R] classify unknown=fatal (no blind retry)");
+  assert(classifyFailure({ code: "ENOTFOUND" }).kind === "fatal", "[R] classify ENOTFOUND=fatal (DNS, no blind retry per plan)");
+
+  // R-UNIT：backoff 单调不减且受 MAX_DELAY_MS 夹紧
+  const b0 = backoffDelayMs(0), b1 = backoffDelayMs(1), b2 = backoffDelayMs(10);
+  assert(b0 <= b1 && b1 <= b2, "[R] backoff non-decreasing");
+  assert(b2 <= RETRY_CONSTANTS.MAX_DELAY_MS + Math.ceil(RETRY_CONSTANTS.MAX_DELAY_MS * 0.15), "[R] backoff capped by MAX_DELAY_MS+jitter");
+
+  // 加速：把退避常数压到 ~ms 级，避免重试测试真实睡眠。
+  const savedBase = RETRY_CONSTANTS.BASE_DELAY_MS, savedMax = RETRY_CONSTANTS.MAX_DELAY_MS;
+  RETRY_CONSTANTS.BASE_DELAY_MS = 1;
+  RETRY_CONSTANTS.MAX_DELAY_MS = 2;
+
+  function buildDistill(overrides, llmOpts) {
+    const cfg = { ...BASE, ...overrides };
+    const ctx = new Context();
+    const mockLlm = makeMockLlm(llmOpts || {});
+    ctx.provide("llm", mockLlm);
+    const getConfig = () => cfg;
+    const paths = createPaths(getConfig, () => null);
+    const records = createRecords({ getConfig, paths });
+    const state = { activeCwd: null, activeSession: null, lastSummarizedSeq: -1, summarySessionId: null };
+    const distill = createDistill({ ctx, getConfig, paths, records, state });
+    return { cfg, mockLlm, paths, distill };
+  }
+  const capturedNoop = { listeners: { "session/event": [] } };
+
+  // R1：503 前 2 次失败 → 重试后第 3 次成功（calls=3，结果 ok）
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-r1-"));
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 503, failTimes: 2, text: '{"summary":"[OK]","durable":[]}' });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析仓库结构" } });
+    fire(s, capturedNoop, "tool/result", { content: "src/x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(mockLlm.calls.length === 3, "[R1] 503x2 then success => 3 calls");
+    assert(r.ok === true, "[R1] retry success returns ok");
+    assert(existsSync(dailyFile(ws)), "[R1] daily written after retry success");
+  }
+
+  // R2：fatal（legacy fail，无 status）→ 不重试（calls=1），结果 ok:false
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-r2-"));
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { fail: true });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
+    fire(s, capturedNoop, "tool/result", { content: "x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(mockLlm.calls.length === 1, "[R2] fatal error => no retry (1 call)");
+    assert(r.ok === false, "[R2] fatal returns ok:false");
+  }
+
+  // R3：503 永久失败 → 重试耗尽（maxRetries=3 → 4 次调用），结果 ok:false
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-r3-"));
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 503, failForever: true });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
+    fire(s, capturedNoop, "tool/result", { content: "x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(mockLlm.calls.length === RETRY_CONSTANTS.MAX_RETRIES + 1, "[R3] 503 forever => MAX_RETRIES+1 calls");
+    assert(r.ok === false, "[R3] exhausted returns ok:false");
+  }
+
+  // R4：500 永久失败 → 单独限到 HTTP500_MAX_RETRIES=1（2 次调用）
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-r4-"));
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 500, failForever: true });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
+    fire(s, capturedNoop, "tool/result", { content: "x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(mockLlm.calls.length === RETRY_CONSTANTS.HTTP500_MAX_RETRIES + 1, "[R4] 500 forever => HTTP500_MAX_RETRIES+1 calls");
+    assert(r.ok === false, "[R4] exhausted returns ok:false");
+  }
+
+  // R5：429 永久失败 → 可重试（limited，走通用 maxRetries → 4 次调用）
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-r5-"));
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 429, failForever: true });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
+    fire(s, capturedNoop, "tool/result", { content: "x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(mockLlm.calls.length === RETRY_CONSTANTS.MAX_RETRIES + 1, "[R5] 429 forever => MAX_RETRIES+1 calls (limited retryable)");
+    assert(r.ok === false, "[R5] exhausted returns ok:false");
+  }
+
+  // 还原退避常数
+  RETRY_CONSTANTS.BASE_DELAY_MS = savedBase;
+  RETRY_CONSTANTS.MAX_DELAY_MS = savedMax;
+}
+
+// ---------- 场景 R6：readNumberedMemory / applyMemoryOp（v1.4.0 特性3 基础） ----------
+console.log("[R6] readNumberedMemory / applyMemoryOp unit");
+{
+  const fsP = await import("node:fs/promises");
+  const pathP = await import("node:path");
+  const ws = mkdtempSync(join(tmpdir(), "mem-r6-"));
+  const file = join(ws, "MEMORY.md");
+  await fsP.writeFile(file, "# 项目笔记\n- 旧事实一\n- 旧事实二", "utf8");
+
+  const nm = readNumberedMemory(file);
+  assert(nm.lines.length === 3, "[R6] readNumberedMemory counts 3 lines");
+  assert(nm.lines[0].structural === true, "[R6] line1 (#) is structural");
+  assert(nm.lines[1].structural === false, "[R6] line2 (bullet) not structural");
+  assert(nm.text.includes("1|"), "[R6] numbered text has line numbers");
+
+  // replace with correct oldText → changed
+  const r1 = await applyMemoryOp(file, { op: "replace", line: 2, oldText: "- 旧事实一", newText: "- 更新事实一" });
+  assert(r1.ok && r1.changed, "[R6] replace with matching oldText succeeds");
+  assert(readFileSync(file, "utf8").includes("更新事实一"), "[R6] file reflects replace");
+
+  // replace with WRONG oldText → conflict (no change)
+  const r2 = await applyMemoryOp(file, { op: "replace", line: 2, oldText: "错的内容", newText: "- 不应发生" });
+  assert(r2.ok === false && r2.reason === "conflict", "[R6] replace with stale oldText rejected (conflict)");
+  assert(!readFileSync(file, "utf8").includes("不应发生"), "[R6] conflict did not mutate file");
+
+  // delete a content line → removed
+  const r3 = await applyMemoryOp(file, { op: "delete", line: 3, oldText: "- 旧事实二" });
+  assert(r3.ok && r3.changed, "[R6] delete content line succeeds");
+  assert(!readFileSync(file, "utf8").includes("旧事实二"), "[R6] deleted line gone");
+
+  // delete a structural line → protected
+  const r4 = await applyMemoryOp(file, { op: "delete", line: 1, oldText: "# 项目笔记" });
+  assert(r4.ok === false && r4.reason === "structural-protected", "[R6] delete structural line rejected");
+
+  // add dedup
+  const r5 = await applyMemoryOp(file, { op: "add", text: "- 更新事实一" });
+  assert(r5.ok && r5.changed === false && r5.reason === "dup", "[R6] add dedups existing line");
+  const r6 = await applyMemoryOp(file, { op: "add", text: "- 全新事实" });
+  assert(r6.ok && r6.changed, "[R6] add new line succeeds");
+  assert(readFileSync(file, "utf8").includes("全新事实"), "[R6] new line appended");
+}
+
+// ---------- 场景 F：回喂存量记忆（v1.4.0 特性3 集成） ----------
+console.log("[F] FEEDBACK existing memory into distill");
+{
+  const { createPaths: cp } = await import("./lib/common/paths.mjs");
+  function buildDistill(overrides, llmOpts) {
+    const cfg = { ...BASE, ...overrides };
+    const ctx = new Context();
+    const mockLlm = makeMockLlm(llmOpts || {});
+    ctx.provide("llm", mockLlm);
+    const getConfig = () => cfg;
+    const paths = cp(getConfig, () => null);
+    const records = createRecords({ getConfig, paths });
+    const state = { activeCwd: null, activeSession: null, lastSummarizedSeq: -1, summarySessionId: null };
+    const distill = createDistill({ ctx, getConfig, paths, records, state });
+    return { cfg, mockLlm, paths, distill };
+  }
+  const capturedNoop = { listeners: { "session/event": [] } };
+
+  // F1：feedbackEnabled + allowDelete → 存量记忆回喂，并执行 replace/delete
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-f1-"));
+    const memFile = join(ws, ".deepseek-harness", "MEMORY.md");
+    const fsP = await import("node:fs/promises");
+    await fsP.mkdir(join(ws, ".deepseek-harness"), { recursive: true });
+    await fsP.writeFile(memFile, "# 项目笔记\n- 旧事实一\n- 旧事实二\n", "utf8");
+    const fbText = JSON.stringify({
+      summary: "x",
+      durable: [],
+      memoryOps: [
+        { op: "replace", line: 2, oldText: "- 旧事实一", newText: "- 更新事实一" },
+        { op: "delete", line: 3, oldText: "- 旧事实二" },
+      ],
+    });
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart", feedbackEnabled: true }, { text: fbText });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析仓库结构" } });
+    fire(s, capturedNoop, "tool/result", { content: "src/x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: true });
+    assert(r.ok === true, "[F1] feedback distill ok");
+    // 存量记忆被回喂（首条消息含项目级记忆内容）
+    const firstMsg = msgsText({ messages: mockLlm.calls[0].messages[0] });
+    assert(firstMsg.includes("旧事实一") && firstMsg.includes("项目级记忆"), "[F1] existing memory fed as feedback");
+    const after = readFileSync(memFile, "utf8");
+    assert(after.includes("更新事实一"), "[F1] replace applied");
+    assert(!after.includes("旧事实二"), "[F1] delete applied");
+    assert(after.includes("# 项目笔记"), "[F1] structural line preserved");
+  }
+
+  // F2：auto 模式（allowDelete=false）→ 仍回喂存量记忆（智能模式级能力），
+  //     但 delete op 被跳过（仅手动按钮允许 delete），replace 仍生效。
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-f2-"));
+    const memFile = join(ws, ".deepseek-harness", "MEMORY.md");
+    const fsP = await import("node:fs/promises");
+    await fsP.mkdir(join(ws, ".deepseek-harness"), { recursive: true });
+    await fsP.writeFile(memFile, "# 项目笔记\n- 旧事实一\n- 旧事实二\n", "utf8");
+    const fbText = JSON.stringify({
+      summary: "x",
+      durable: [],
+      memoryOps: [
+        { op: "replace", line: 2, oldText: "- 旧事实一", newText: "- 更新事实一" },
+        { op: "delete", line: 3, oldText: "- 旧事实二" },
+      ],
+    });
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart", feedbackEnabled: true }, { text: fbText });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
+    fire(s, capturedNoop, "tool/result", { content: "x" });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(r.ok === true, "[F2] auto distill ok");
+    const firstMsg = msgsText({ messages: mockLlm.calls[0].messages[0] });
+    // 自动模式仍回喂存量记忆（智能模式级能力，非手动按钮专属）
+    assert(firstMsg.includes("旧事实一") && firstMsg.includes("项目级记忆"), "[F2] feedback still fed in auto mode (smart-mode-level)");
+    const after = readFileSync(memFile, "utf8");
+    // delete 在自动模式被跳过 → 旧事实二仍在
+    assert(after.includes("旧事实二"), "[F2] delete skipped in auto mode");
+    // replace 在自动模式仍生效 → 旧事实一被更新
+    assert(after.includes("更新事实一") && !after.includes("- 旧事实一\n"), "[F2] replace applied in auto mode");
+    assert(after.includes("# 项目笔记"), "[F2] structural line preserved");
+  }
+
+  // F3：LLM 返回非 JSON 自由文本（含对话体/请示）→ 解析失败，绝不把原文当 summary 落盘（防污染回归）。
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-f3-"));
+    await (await import("node:fs/promises")).mkdir(join(ws, ".deepseek-harness", "memory"), { recursive: true });
+    const poison = "But wait - looking at the context, I should provide a clean response. 需要的话，我可以顺手把这条官方 verified 事实记进项目记忆，方便日后核对版本。";
+    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { text: poison });
+    const s = fakeSession(ws);
+    fire(s, capturedNoop, "user/message", { message: { content: "分析 JRE 版本" } });
+    const dirs = paths.writeDirs(ws);
+    const r = await distill.distillSessionCore(s, dirs, 0, { allowDelete: false });
+    assert(r.ok === true, "[F3] non-JSON distill still ok (wrote placeholder)");
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.md`;
+    const dailyPath = join(ws, ".deepseek-harness", "memory", today);
+    const daily = readFileSync(dailyPath, "utf8");
+    assert(!daily.includes("需要的话") && !daily.includes("But wait"), "[F3] raw LLM text NOT written to daily log (anti-pollution)");
+    assert(daily.includes("已跳过原文落盘") || daily.includes("未返回可解析的结构化摘要"), "[F3] placeholder written instead of raw text");
+  }
 }
 
 console.log(`\n==== RESULT: ${pass} passed, ${fail} failed ====`);

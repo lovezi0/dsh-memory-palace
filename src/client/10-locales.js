@@ -20,7 +20,7 @@
       wsBudgetLabel: "工作区预算（字符）",
       wsBudgetHint: "工作区 MEMORY.md 的最大字符数",
       summarizeLabel: "轮次结束自动记录",
-      summarizeHint: "它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。",
+      summarizeHint: "两种记忆模式的共用总闸门：关闭后无论插件模式还是智能模式都不写记忆。插件模式下它作为「agent 主动记忆」主路径失效时的安全网，只留原始文本、不做总结；智能模式下开启则走 LLM 智能摘要（总结 + 提炼）。",
       autoCaptureErrorsLabel: "对话出错时自动记录到记忆",
       autoCaptureErrorsHint: "对话中（含代码运行报错、工具执行失败）出错时，自动把「错误现象」写入对应 MEMORY.md（用户级/项目级）；「根因/方案」由 agent 按记忆公民指令主动记。默认开，关闭无需重启。",
       memoryModeLabel: "记忆模式",
@@ -55,7 +55,13 @@
       distillDebugLogHint: "开启后向 dsh 服务端控制台（stderr）输出蒸馏 LLM 调用诊断，仅排障用，平时关闭。",
       dev: "开发",
       distillTimeoutLabel: "蒸馏超时（秒）",
-      distillTimeoutHint: "单次蒸馏 LLM 调用的超时上限（秒）；超时视为失败并降级。覆盖智能模式摘要与手动蒸馏，默认 60 秒。"
+      distillTimeoutHint: "单次蒸馏 LLM 调用的超时上限（秒）；超时视为失败并降级。覆盖智能模式摘要与手动蒸馏，默认 60 秒。",
+      summaryMaxTokensLabel: "会话摘要最大 Token（智能模式）",
+      summaryMaxTokensHint: "智能模式会话摘要 LLM 的最大输出 Token（summary + durable 合计上限）。默认 2000，过小会截断 durable 事实，可上调到 4000+。",
+      projectMaxTokensLabel: "项目蒸馏最大 Token",
+      projectMaxTokensHint: "手动「蒸馏项目记忆」LLM 的最大输出 Token（蒸馏后 MEMORY.md 长度上限）。默认 8000，过小会截断浓缩结果，可上调。",
+      feedbackEnabledLabel: "蒸馏回喂存量记忆",
+      feedbackEnabledHint: "开启后，自动智能模式（turn/end）与手动蒸馏会话按钮均会把项目级 + 用户级 MEMORY.md 全文（逐行编号、无截断）回喂 LLM，使其能基于既有记忆做 add/replace/delete 增量维护。delete 仅手动蒸馏按钮开放，自动模式跳过（防误删）。默认关。"
     };
 
     const en = {
@@ -80,7 +86,7 @@
       wsBudgetLabel: "Workspace budget (chars)",
       wsBudgetHint: "Max chars for the workspace MEMORY.md",
       summarizeLabel: "Auto-record at turn end",
-      summarizeHint: "It is the safety net when the 'agent proactive memory' main path fails: substantive work is never lost, at the cost of keeping only raw text without summarization.",
+      summarizeHint: "The shared master gate for both memory modes: when off, neither plugin nor smart mode writes any memory. In plugin mode it is the safety net when the 'agent proactive memory' main path fails (keeps raw text, no summarization); in smart mode it enables the LLM summarization path (summary + extraction).",
       autoCaptureErrorsLabel: "Auto-record conversation errors",
       autoCaptureErrorsHint: "On in-session errors, auto write the 'error' into the corresponding MEMORY.md (user/project); 'root cause / fix' is recorded proactively by the agent. On by default; off takes effect without restart.",
       memoryModeLabel: "Memory mode",
@@ -115,5 +121,11 @@
       distillDebugLogHint: "When on, prints distill LLM call diagnostics to the dsh server console (stderr). For troubleshooting only; keep off normally.",
       dev: "Developer",
       distillTimeoutLabel: "Distill timeout (s)",
-      distillTimeoutHint: "Timeout (in seconds) for a single distill LLM call; on timeout it fails and degrades. Covers both smart-mode summary and manual distillation. Default 60s."
+      distillTimeoutHint: "Timeout (in seconds) for a single distill LLM call; on timeout it fails and degrades. Covers both smart-mode summary and manual distillation. Default 60s.",
+      summaryMaxTokensLabel: "Session summary max tokens (smart mode)",
+      summaryMaxTokensHint: "Max output tokens for the smart-mode session summary LLM call (summary + durable combined cap). Default 2000; too low truncates durable facts, raise to 4000+ if needed.",
+      projectMaxTokensLabel: "Project distill max tokens",
+      projectMaxTokensHint: "Max output tokens for the manual 'distill project memory' LLM call (cap on the resulting MEMORY.md length). Default 8000; too low truncates the condensed result, raise if needed.",
+      feedbackEnabledLabel: "Feed existing memory into distillation",
+      feedbackEnabledHint: "When on, both the auto smart-mode (turn/end) and the manual session distillation feed the full project-level + user-level MEMORY.md (line-numbered, no truncation) back to the LLM so it can maintain memory incrementally via add/replace/delete. delete is only allowed via the manual distill button; auto mode skips it (to avoid accidental memory loss). Off by default."
     };

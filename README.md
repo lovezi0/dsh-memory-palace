@@ -1,5 +1,4 @@
 # dsh-memory-palace <img src="assets/memory-icon.svg" width="36" height="36" alt="dsh-memory-palace" />
----
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
@@ -35,10 +34,6 @@
     └── memory/
         └── 2026-08-16.md          # 每日工作日志
 ```
-
-> **布局迭代（v1.1.x）**：早期版本曾把项目级 MEMORY.md 放在 `.deepseek-harness/memory/MEMORY.md`（嵌套）；现已改为与 `memory/` **同级**（`.deepseek-harness/MEMORY.md`）。旧嵌套位置仍会被读取（向后兼容、不丢旧数据），但**写入一律走同级**。
-
-> **桥接规则**：`bridgeBuddyMemory` 开启时，只要项目里存在任一 buddy 记忆目录，就**只**读写这些目录，不再创建 `.deepseek-harness/memory/`；全部不存在时才回退到 dsh 目录。buddy 目录绝不被主动创建。
 
 ## 工作原理
 
@@ -79,7 +74,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.3.0
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.4.0
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -98,7 +93,7 @@ dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实
 # 直接由 dsh 从 npm 拉取并装入（本机若已配镜像会自动走镜像）
 dsh plugin --profile web add dsh-memory-palace
 # 锁定版本：
-dsh plugin --profile web add dsh-memory-palace@1.3.0
+dsh plugin --profile web add dsh-memory-palace@1.4.0
 
 # 或先手动用 npm 安装（显式指定镜像），再装入：
 npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
@@ -112,49 +107,21 @@ dsh plugin --profile web remove dsh-memory-palace
 ```
 
 ## 配置
-
-可在 DSH 设置 →「记忆」面板中调整，或通过 profile 配置注入：
-
-| 配置项 | 默认值 | 说明 |
-|---|---|---|
-| 总开关 | `true` | 总开关，关闭后不注入、不写入 |
-| 用户级记忆路径 | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
-| 工作区记忆目录 | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
-| 日志保留天数 | `30` | 每日日志保留天数，过期迁移进 `MEMORY.md` |
-| 用户级记忆字数上限 | `4000` | 注入系统提示词的用户级记忆长度上限（字符） |
-| 工作区级记忆字数上限 | `3000` | 注入系统提示词的工作区级记忆长度上限（字符） |
-| 桥接 Buddy 记忆 | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
-| Buddy 记忆目录列表 | `[".workbuddy/memory", ".codebuddy/memory"]` | 要桥接的 buddy 目录列表（按优先级，已存在的全部同步写入） |
-
-### 自动记录（设置页「记忆 → 自动记录」卡片）
-
-| 配置项 | 默认值 | 说明 |
-|---|---|---|
-| 记忆模式 | `plugin` | 两种互斥模式：`plugin`=记忆公民指令+轮次轻量+错误捕获（默认）；`smart`=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md，带 `[smart]` 标记）。**切换需重启 dsh 生效** |
-| 轮次结束自动记录 | `true` | 插件模式下：它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。智能模式下该开关仍为总闸门 |
-| 摘要模型 | `""`（空=复用当前会话模型） | 智能模式专用：留空自动复用当前会话 provider/model；填 `provider/model`（如 `deepseek/deepseek-chat`）固定廉价模型省 token |
-| 对话出错自动记录 | `true` | 插件模式下：自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；默认开启，**关闭无需重启 dsh**。智能模式下错误由 LLM 摘要统一提炼 |
-
-> **设置保存（v1.1.4 起）**：设置页保存已**真正落盘**
->
-> 历史方案（仍可用作兜底）：直接在 profile 的 `cordis.patch.yml` 注入配置（id-targeted config override，与插件 bundle insert 的 id 一致）：
->
-> ```yaml
-> - id: memory-palace
->   name: 'dsh-memory-palace'
->   config:
->     memoryMode: smart
->     summaryModel: ''
-> ```
->
-> 修改后重启 dsh 生效。
+*面板路径为 DSH 设置 →「记忆」*
+所有配置项（基础 / 自动记录 / 开发 三张卡片的字段、默认值与说明）已整理至 [CONFIG.md](./CONFIG.md)
 
 ## 开发
 
-目录结构、构建与测试、技术要点见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
+架构 / 构建 / 技术要点 / 蒸馏失败重试 见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
+提示词与智能模式蒸馏（公民指令 / 摘要 / 蒸馏） 见 [PROMPTS.md](./PROMPTS.md)。
 
 ## 版本历史
 
+- **1.4.0**
+    - 🔥智能模式增加最大输出Token限制
+    - 🔥智能模式增加失败重试机制
+    - 🔥智能模式会增加回馈存量记忆
+    - 🐛修复自动记录部分设置位置错误问题
 - **1.3.0**
     - 🔥新增计划模式禁止写入记忆
     - 💪设置-记忆控件样式优化 *使用dsh原生样式*

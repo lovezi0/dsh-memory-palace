@@ -4,17 +4,42 @@
 // 场景关键词（增强原方案 D）：命中即视为"用户告知偏好 / 做出技术决策"，纯文本轮次也写。
 export const SCENE_KEYWORDS = ["记住", "记一下", "remind", "偏好", "决定", "以后都", "约定", "采用", "根因", "修复"];
 
-// 智能模式（memoryMode==="smart"）的摘要提炼 prompt：让 LLM 输出 {summary, durable:[{scope,fact}]}。
-// 产物：summary → 每日日志（带 [smart] 标记）；durable → MEMORY.md（- [smart] <fact>，按 scope 分层）。
-export const SUMMARY_PROMPT =
-  "你是会话记忆提炼助手。根据下面这段【新产生的】对话（含工具调用与结果），提炼两样东西：\n" +
-  "1) summary：一段简洁中文摘要——这段对话做了什么、关键结果（路径/命令/数字）。\n" +
-  "2) durable：值得跨 session 长期记住的事实列表（最多 3 条），每条带 scope：\n" +
-  '   - "project" = 当前项目的约定/决策/技术事实\n' +
-  '   - "user" = 跨项目的个人偏好/习惯\n' +
-  "   闲聊、一次性操作、显而易见的内容、纯错误现象（错误已有独立记录）不要提炼；没有就留空数组。\n" +
-  "只输出 JSON，不要多余文字，格式：\n" +
-  '{"summary":"...","durable":[{"scope":"project","fact":"一句话"}]}';
+// 智能模式（memoryMode==="smart"）的摘要提炼 prompt（v1.4.0 起为函数，支持回喂存量记忆）。
+// 让 LLM 输出 {summary, durable:[{scope,fact}], memoryOps:[...]}；memoryOps 用于基于编号的现有记忆做增量维护。
+// allowDelete=true（手动蒸馏按钮）：开放 add/replace/delete；false（自动智能模式）：禁 delete，仅 add/replace。
+// 注意：回喂是否实际发生由 distill.mjs 按 cfg().feedbackEnabled 决定（智能模式级，自动/手动均生效）；
+// 此处仅声明能力边界——allowDelete 决定 prompt 是否允许 delete 指令（自动模式禁 delete，手动按钮放开）。
+export function SUMMARY_PROMPT({ allowDelete = false } = {}) {
+  const feedbackInstr = allowDelete
+    ? "【维护现有记忆】若对话中提供了「项目级记忆 / 用户级记忆（逐行编号）」，你可在输出 memoryOps 中对现有记忆做增量维护：\n" +
+      '- add：新增一条事实（scope + fact），勿与现有重复；\n' +
+      '- replace：line=现有行号，oldText=该行精确原文，newText=替换后全文（仅内容行，禁止改动 # / <!-- 结构行）；\n' +
+      '- delete：line=现有行号，oldText=该行精确原文（仅内容行，禁止删除 # / <!-- 结构行）；\n' +
+      "所有 replace/delete 必须带 oldText 精确匹配（匹配失败将被拒绝、不修改任何内容）。"
+    : "【维护现有记忆】若对话中提供了「项目级记忆 / 用户级记忆（逐行编号）」，你可在输出 memoryOps 中对现有记忆做增量维护：\n" +
+      '- add：新增一条事实（scope + fact），勿与现有重复；\n' +
+      '- replace：line=现有行号，oldText=该行精确原文，newText=替换后全文（仅内容行）；\n' +
+      "（当前为自动模式，禁止使用 delete，避免误删记忆；replace 必须带 oldText 精确匹配，匹配失败将被拒绝。）";
+
+  return (
+    "你是会话记忆提炼助手。根据下面这段【新产生的】对话（含工具调用与结果），提炼两样东西：\n" +
+    "1) summary：一段简洁中文摘要——这段对话做了什么、关键结果（路径/命令/数字）。\n" +
+    "2) durable：值得跨 session 长期记住的事实列表（最多 3 条），每条带 scope：\n" +
+    '   - "project" = 当前项目的约定/决策/技术事实\n' +
+    '   - "user" = 跨项目的个人偏好/习惯\n' +
+    "   闲聊、一次性操作、显而易见的内容、纯错误现象（错误已有独立记录）不要提炼；没有就留空数组。\n" +
+    "【输出风格硬约束】\n" +
+    "1) summary 必须是**客观、第三人称、陈述性**的中文摘要，描述「对话完成了什么 / 得出了什么结论」；\n" +
+    "   **严禁**包含：提问、提议、请示、寒暄、自我指涉（如「我可以帮你…」「需要的话…」「要不要…」）、\n" +
+    "   内心独白（如「But wait」「I should…」）或任何对话体 / 元叙述——你是在**写记忆**，不是在**对话**。\n" +
+    "2) durable 每条必须是**可独立成立的客观事实**；**严禁**把「助手说过的话 / 向用户提问 / 未确认的提议」本身当作事实记录。\n" +
+    "3) 若对话中仅含未决的提问或提议、无确定结论，summary 写「本次对话为未决讨论，暂无确定结论」，durable 留空，绝不可照抄对话体文本。\n" +
+    feedbackInstr +
+    "\n只输出 JSON，不要多余文字，格式：\n" +
+    '{"summary":"...","durable":[{"scope":"project","fact":"一句话"}],"memoryOps":[{"op":"add","scope":"project","fact":"..."},{"op":"replace","line":12,"oldText":"...","newText":"..."},{"op":"delete","line":7,"oldText":"..."}]}\n' +
+    "（没有需要维护的现有记忆时，memoryOps 留空数组 []。）"
+  );
+}
 
 // v1.2.0 项目记忆蒸馏 prompt（固化自 upgrade plan/v1.2.0/记忆蒸馏Prompt.md，供按钮「蒸馏项目记忆」稳定调用）。
 // 用法：system = 本 prompt，user = 项目 MEMORY.md 全文，输出 = 精炼后的项目记忆（直接覆盖写回）。

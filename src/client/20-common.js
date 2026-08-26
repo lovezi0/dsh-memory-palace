@@ -1,5 +1,5 @@
-    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs"]);
-    const FIELD_BOOL = new Set(["bridgeBuddyMemory", "summarize", "autoCaptureErrors", "distillDebugLog"]);
+    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "summaryMaxTokens", "projectMaxTokens"]);
+    const FIELD_BOOL = new Set(["bridgeBuddyMemory", "summarize", "autoCaptureErrors", "distillDebugLog", "feedbackEnabled"]);
 
     function projectDraft(snap) {
       const v = snap && snap.value ? snap.value : {};
@@ -16,7 +16,10 @@
         distillDebugLog: v.distillDebugLog === false ? "false" : "true",
         summaryTimeoutMs: v.summaryTimeoutMs != null ? String(Math.round((Number(v.summaryTimeoutMs) || 0) / 1000)) : "60",
         memoryMode: v.memoryMode || "plugin",
-        summaryModel: v.summaryModel || ""
+        summaryModel: v.summaryModel || "",
+        summaryMaxTokens: v.summaryMaxTokens != null ? String(v.summaryMaxTokens) : "2000",
+        projectMaxTokens: v.projectMaxTokens != null ? String(v.projectMaxTokens) : "8000",
+        feedbackEnabled: v.feedbackEnabled === false ? "false" : "true"
       };
     }
 

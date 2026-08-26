@@ -11,3 +11,6 @@
 - 0.3.0 — 前端「记忆」设置页（独立设置页 slot，中英双语）。
 - 0.2.0 — 后端设置集成（installSettingsSection 注册配置面板）。
 - 0.1.0 — 核心：双层 Markdown 记忆读写、系统提示词注入、每日日志与蒸馏。
+
+## 记忆文件布局
+> **布局迭代（v1.1.x）**：早期版本曾把项目级 MEMORY.md 放在 `.deepseek-harness/memory/MEMORY.md`（嵌套）；现已改为与 `memory/` **同级**（`.deepseek-harness/MEMORY.md`）。旧嵌套位置仍会被读取（向后兼容、不丢旧数据），但**写入一律走同级**。

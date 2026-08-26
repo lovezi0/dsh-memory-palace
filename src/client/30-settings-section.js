@@ -120,9 +120,11 @@
       const userLayer = remote.user && typeof remote.user === "object" ? remote.user : {};
       const isOverridden = (field) => field in userLayer;
 
+      // 左侧文字容器：min-width:0 + flexShrink:1 让长描述正常换行收缩，不再撑爆 flex 把 checkbox 挤变形。
+      const toggleLabelBoxStyle = { flexShrink: 1, minWidth: 0 };
       const toggle = (label, hint, field, disabledOverride) =>
         h("div", { style: toggleStyle }, [
-          h("div", null, [
+          h("div", { style: toggleLabelBoxStyle }, [
             h("p", { style: { ...labelStyle, margin: 0 } }, label),
             h("p", { style: hintStyle }, hint)
           ]),
@@ -170,10 +172,14 @@
         paddingRight: "32px"
       };
       const checkboxStyle = {
-        width: "15px",
-        height: "15px",
+        width: "18px",
+        height: "18px",
         margin: "0",
-        accentColor: "var(--dsw-alias-brand-primary, #4b5bff)"
+        accentColor: "var(--dsw-alias-brand-primary, #4b5bff)",
+        // 锁死：不被 flex 长描述挤压缩（flex-shrink 默认 1 会在布局阶段无视 width/!important）。
+        flexShrink: 0,
+        flexGrow: 0,
+        alignSelf: "center"
       };
       const toggleStyle = {
         display: "flex",
@@ -273,7 +279,9 @@
         onChange: (e) => edit(field, e.target.value)
       });
 
-      return h("div", { style: sectionStyle }, [
+      return h("div", { className: "memory-palace-settings", style: sectionStyle }, [
+        // 强制覆盖宿主 Webview 全局样式对原生 checkbox 尺寸的覆盖（内联 style 可能不敌全局 CSS）。
+        h("style", null, ".memory-palace-settings input[type=checkbox]{width:18px!important;height:18px!important;margin:0;flex-shrink:0!important;cursor:pointer;}"),
         h("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" } }, [
           h("div", null, [
             h("h3", { style: headingStyle }, t("title")),
@@ -288,7 +296,7 @@
         h("div", { style: cardStyle }, [
           h("p", { style: groupTitleStyle }, t("core")),
           h("div", { style: toggleStyle }, [
-            h("div", null, [
+            h("div", { style: { flexShrink: 1, minWidth: 0 } }, [
               h("p", { style: { ...labelStyle, margin: 0 } }, t("bridgeLabel")),
               h("p", { style: hintStyle }, t("bridgeHint"))
             ]),
@@ -309,6 +317,8 @@
         ]),
         h("div", { style: cardStyle }, [
           h("p", { style: groupTitleStyle }, t("smartSummary")),
+          // 轮次结束自动记录(summarize)：两种记忆模式的共用总闸门，始终显示，置于记忆模式之上、不随模式切换隐藏。
+          toggle(t("summarizeLabel"), t("summarizeHint"), "summarize"),
           row(t("memoryModeLabel"), draft.memoryMode === "smart" ? t("memoryModeHintSmart") : t("memoryModeHintPlugin"),
             h("select", {
               value: draft.memoryMode === "smart" ? "smart" : "plugin",
@@ -320,20 +330,24 @@
               h("option", { value: "smart" }, "智能模式")
             ]), "memoryMode"),
           draft.memoryMode === "smart"
-            ? row(t("summaryModelLabel"), t("summaryModelHint"),
-                h("select", {
-                  // 已存储值不在下拉选项内（如旧版双前缀脏数据）→ 归零为「复用当前会话模型」，
-                  // 避免 select 显示悬空值、保存时又把脏值写回 settings.yaml。
-                  value: modelOptions.some((o) => o.value === draft.summaryModel) ? draft.summaryModel : "",
-                  disabled,
-                  style: selectStyle,
-                  onChange: (e) => edit("summaryModel", e.target.value)
-                }, [
-                  h("option", { value: "" }, "复用当前会话模型"),
-                  ...modelOptions.map((o) => h("option", { value: o.value }, o.label))
-                ]), "summaryModel")
+            ? h("div", null, [
+                row(t("summaryModelLabel"), t("summaryModelHint"),
+                  h("select", {
+                    // 已存储值不在下拉选项内（如旧版双前缀脏数据）→ 归零为「复用当前会话模型」，
+                    // 避免 select 显示悬空值、保存时又把脏值写回 settings.yaml。
+                    value: modelOptions.some((o) => o.value === draft.summaryModel) ? draft.summaryModel : "",
+                    disabled,
+                    style: selectStyle,
+                    onChange: (e) => edit("summaryModel", e.target.value)
+                  }, [
+                    h("option", { value: "" }, "复用当前会话模型"),
+                    ...modelOptions.map((o) => h("option", { value: o.value }, o.label))
+                  ]), "summaryModel"),
+                toggle(t("feedbackEnabledLabel"), t("feedbackEnabledHint"), "feedbackEnabled"),
+                row(t("summaryMaxTokensLabel"), t("summaryMaxTokensHint"), h("input", num("summaryMaxTokens")), "summaryMaxTokens"),
+                row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
+              ])
             : h("div", null, [
-                toggle(t("summarizeLabel"), t("summarizeHint"), "summarize"),
                 toggle(t("autoCaptureErrorsLabel"), t("autoCaptureErrorsHint"), "autoCaptureErrors")
               ])
         ]),
