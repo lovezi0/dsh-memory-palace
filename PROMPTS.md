@@ -71,10 +71,11 @@ export const SCENE_KEYWORDS = ["记住", "记一下", "remind", "偏好", "决�
 
 ### 4.2 函数签名
 ```js
-SUMMARY_PROMPT({ allowDelete = false } = {})
+SUMMARY_PROMPT({ allowDelete = false, outputBudget } = {})
 ```
 - `allowDelete = true`：**手动蒸馏按钮**场景，开放 `add` / `replace` / `delete` 三类记忆维护指令。
 - `allowDelete = false`：**自动智能模式**场景，仅开放 `add` / `replace`，**禁止 delete**（避免误删记忆）。
+- `outputBudget`（v1.4.1 新增）：最终输出软预算 token 数（取自 `summaryMaxTokens`，默认 2000）。注入 prompt 的【输出长度约束】：最终 JSON 控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；**思考/推理不受限**，但成稿须精炼不超预算。该值仅作为 prompt 软约束，**不**传给 harness API、更不乘倍——API 层已不传 `maxTokens`，思考+输出合计靠模型自身原生帽兜底。
 
 > 注意：回喂是否实际发生由 `distill.mjs` 按 `cfg().feedbackEnabled` 决定（智能模式级，自动/手动均生效）；本 prompt 仅声明能力边界——`allowDelete` 决定 prompt 是否允许 delete 指令。
 
@@ -105,7 +106,9 @@ SUMMARY_PROMPT({ allowDelete = false } = {})
 真源：`src/common/prompts.mjs`。固化自 `upgrade plan/v1.2.0/记忆蒸馏Prompt.md`。
 
 ### 5.1 用途与触发
-手动「蒸馏项目记忆」按钮调用：system = 本 prompt，user = 项目 `MEMORY.md` 全文，输出 = 精炼后的项目记忆，**直接覆盖写回**（手动蒸馏开放 delete，`allowDelete:true`）。
+手动「蒸馏项目记忆」按钮调用：system = 本 prompt（函数式，注入 `outputBudget`），user = 项目 `MEMORY.md` 全文，输出 = 精炼后的项目记忆，**直接覆盖写回**（手动蒸馏开放 delete，`allowDelete:true`）。
+
+> **v1.4.1 起为函数**：`DISTILL_PROMPT({ outputBudget } = {})`。`outputBudget` 取自 `projectMaxTokens`（默认 8000），注入【输出长度约束】：提炼后的项目记忆控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；思考不受限，成稿须精炼不超预算。该值仅 prompt 软约束，**不**传给 API（API 层不传 maxTokens，靠模型原生帽兜底）。
 
 ### 5.2 提炼总原则
 只留「以后还会用到」，删「一次性过程」；判断标准：删了这条下次开会会不会出错/返工/重踩坑？会→留，不会→删。
