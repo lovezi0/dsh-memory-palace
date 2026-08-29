@@ -3,7 +3,7 @@
 import { mkdir, readdir, unlink, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { todayISO, expandHome, readMdSync, toHomeShort, normLine, isStructural } from "./text.mjs";
+import { todayISO, expandHome, readMdSync, toHomeShort, normLine, isStructural, stripSmartTag } from "./text.mjs";
 
 // 追加一行记忆，若目标文件已包含相同内容则跳过（去重），返回是否实际写入。
 export async function appendLineDedup(file, line) {
@@ -78,6 +78,8 @@ export async function removeLineByMatch(file, match) {
 // 全文逐行编号读取（v1.4.0 特性3：回喂存量记忆）。返回 { lines:[{n,raw,structural}], text }。
 // 行号 n 与文件实际行一一对应（1 起），供 LLM 通过 line 引用；text 为每行 `n|raw` 拼接，直接喂模型。
 // 不截断、无字符预算（用户明确要求全量回喂，避免截断导致记忆错误）。
+// v1.4.1：回喂行经 stripSmartTag 剥除行首 [smart] 标记——模型不可见该标签（写侧已停拼），
+// 存量磁盘条目读时透明剥除。replace/delete 的 oldText 校验仍以磁盘原文（raw）为准，不受影响。
 export function readNumberedMemory(file) {
   let cur = "";
   try {
@@ -90,7 +92,7 @@ export function readNumberedMemory(file) {
     const t = raw.trim();
     return { n: i + 1, raw, structural: isStructural(t) };
   });
-  const text = lines.map((l) => `${l.n}|${l.raw}`).join("\n");
+  const text = lines.map((l) => `${l.n}|${stripSmartTag(l.raw)}`).join("\n");
   return { lines, text };
 }
 

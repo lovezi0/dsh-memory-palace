@@ -15,7 +15,8 @@
 - **会话标题栏「记忆」按钮**：支持手动蒸馏：①蒸馏会话 / ②蒸馏项目记忆。
 - **设置页集成**：DSH 设置中内置「记忆」面板（中英双语），所有配置均可图形化调整，无需改配置文件。
 - **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档 — 对标 WorkBuddy 的"智能记一笔"手感。
-- **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志（带 `[smart]` 标记）+ durable 事实写 MEMORY.md。
+- **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志 + durable 事实写 MEMORY.md（v1.4.2 起条目不再带 `[smart]` 标签）。
+- **记忆注入（v1.4.2）**：记忆块仅在会话**首次**构建时注入（DSH 会话自身继承历史轮次，逐轮注入冗余且有过时断言干扰）；发生上下文压缩（compaction）后自动重注。注入按预算截断时保留结构行与**尾部最新条目**（写入追加在尾部，确保最新结论始终可见）。
 - **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
 
 ## 记忆文件布局
@@ -74,7 +75,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.4.1
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.4.2-alpha.1
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -93,7 +94,7 @@ dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实
 # 直接由 dsh 从 npm 拉取并装入（本机若已配镜像会自动走镜像）
 dsh plugin --profile web add dsh-memory-palace
 # 锁定版本：
-dsh plugin --profile web add dsh-memory-palace@1.4.1
+dsh plugin --profile web add dsh-memory-palace@1.4.2-alpha.1
 
 # 或先手动用 npm 安装（显式指定镜像），再装入：
 npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
@@ -117,6 +118,11 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.4.2.alpha.1**
+    - 💪记忆注入：仅首次注入 + compaction 重注
+    - 💪优化手动项目蒸馏prompt
+    - 💪[smart] 标签全移除
+    - 🐛修复记忆文件LIFO/FIFO 错配
 - **1.4.1**
     - 🐛修复输出预算使用错位的问题
     - 🐛增加调试模式日志级别 *默认info 仅输出元数据日志，debug 输出完整LLM text*

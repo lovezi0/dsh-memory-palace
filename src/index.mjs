@@ -25,7 +25,7 @@
 import { join } from "node:path";
 import Schema from "@deepseek-ai/schemastery";
 import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
-import { todayISO, expandHome, toHomeShort, readMdSync, budgetClip, extractText, extractToolErrorText } from "./common/text.mjs";
+import { todayISO, expandHome, toHomeShort, readMdSync, budgetClip, stripSmartTag, extractText, extractToolErrorText } from "./common/text.mjs";
 import { SCENE_KEYWORDS } from "./common/prompts.mjs";
 import { createPaths } from "./common/paths.mjs";
 import { createRecords } from "./common/records.mjs";
@@ -112,6 +112,9 @@ export function apply(ctx, config) {
     lastSummarizedSeq: -1,    // 智能模式增量摘要断点（session 事件 seq）
     summarySessionId: null,
     planModeActive: false,    // 计划模式：禁写记忆（硬编码默认，无开关；仅经 session/event 的 plan/mode 翻转；未装 dsh-plan-mode 永不触发=不拦截）
+    // v1.4.1：已注入记忆的 session 集合——仅首次注入（DSH 会话自身继承历史轮次，逐轮注入
+    // = 内容重复 + 过时断言每轮在场）；compaction 发生后清除对应 id，下次构建重注。
+    injectedSessionIds: new Set(),
   };
   const TURN_BUFFER_MAX = 30;
   // v1.1.3：字符上限提升到 30k（长工具型 request 的工具结果动辄数千字符，6k 上限会触发
@@ -169,6 +172,10 @@ export function apply(ctx, config) {
       }
       // 不清空 buffer；用 debounce 在整段请求安静后结算一次。
       _scheduleSettle();
+    } else if (type === "compaction" || type?.startsWith?.("compaction/")) {
+      // v1.4.1：compaction 压缩上下文后，记忆块可能被压掉——清除已注入标记，
+      // 下次 system prompt 构建时重注（压缩后上下文变薄，重注时机依然正确）。
+      if (session?.id) state.injectedSessionIds.delete(session.id);
     }
   });
 
@@ -183,16 +190,27 @@ export function apply(ctx, config) {
       const userFileShort = toHomeShort(userFileResolved);
       const blocks = [];
       // v1.2.0：注入按预算截断——用户级 ≤ userBudgetChars、工作区级（MEMORY.md 与今日日志）
-      // 各自 ≤ workspaceBudgetChars；保留头部并追加截断标记（修复预算死配置问题）。
+      // 各自 ≤ workspaceBudgetChars。v1.4.1：budgetClip 改为"结构行 + 尾部最新条目"（修
+      // LIFO/FIFO 错配——写入追加在尾部，旧实现只留头部导致最新结论永远进不了视野），
+      // stripSmartTag 剥除行首 [smart] 标记（模型不可见该标签，存量自然消亡）。
       const u = readMdSync(userFileResolved);
-      if (u) blocks.push(`# 用户级记忆 (${userFileShort})\n${budgetClip(u, cfg.userBudgetChars)}`);
+      if (u) blocks.push(`# 用户级记忆 (${userFileShort})\n${stripSmartTag(budgetClip(u, cfg.userBudgetChars))}`);
       for (const dir of paths.readDirs()) {
         const dirShort = toHomeShort(dir);
         const w = paths.memoryReadCandidates(dir).map(readMdSync).filter(Boolean).join("\n\n");
-        if (w) blocks.push(`# 工作区记忆 (${dirShort})\n${budgetClip(w, cfg.workspaceBudgetChars)}`);
+        if (w) blocks.push(`# 工作区记忆 (${dirShort})\n${stripSmartTag(budgetClip(w, cfg.workspaceBudgetChars))}`);
         const t = readMdSync(join(dir, `${todayISO()}.md`));
-        if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dirShort})\n${budgetClip(t, cfg.workspaceBudgetChars)}`);
+        if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dirShort})\n${stripSmartTag(budgetClip(t, cfg.workspaceBudgetChars))}`);
       }
+      // v1.4.1：仅首次注入。DSH 会话自身引用历史轮次作为上下文，逐轮注入 = 内容重复 +
+      // 过时断言每轮在场；记忆注入的价值大头在冷启动第一轮。已注入过的 session 返回
+      // 空串；compaction 后经 session/event 清除标记实现重注。
+      // intro 指令仍始终注入（无记忆时也不例外——否则 agent 不知道记忆系统存在，形成
+      // 「无记忆→无指令→永不记」死循环）；被跳过的只是记忆正文块。
+      const sessionId = state.activeSession?.id ?? null;
+      const alreadyInjected = sessionId ? state.injectedSessionIds.has(sessionId) : false;
+      if (sessionId && !alreadyInjected && blocks.length) state.injectedSessionIds.add(sessionId);
+      if (alreadyInjected) blocks.length = 0;
       // 记忆正文可能为空（冷启动 / 全新环境尚无任何记忆）。
       // 注意：intro（含记忆公民指令）必须【始终】注入——若因记忆为空而整体返回空串，
       // agent 将不知道记忆系统存在、不会主动记，形成「无记忆 → 无指令 → 永不记」的死循环。
@@ -223,6 +241,8 @@ export function apply(ctx, config) {
         ? "\n\n[plan 模式] 当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取记忆用 memory_read，仍可用）。"
         : "";
       const introFull = intro + planNote;
+      // v1.4.1：blocks 为空（已注入过）时只返回 intro 指令；返回值永非空串，
+      // 避免 harness 对空 section 的处理歧义。
       return blocks.length ? [introFull, ...blocks].join("\n\n") : introFull;
     },
   });

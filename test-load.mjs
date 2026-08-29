@@ -668,8 +668,10 @@ console.log("[S4] SMART MODE → durable distilled into MEMORY.md with [smart]")
   await sleep(1800);
   const mem = join(ws, ".deepseek-harness/MEMORY.md");
   const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
-  assert(memText.includes("- [smart] use tabs for indentation"), "[S4] durable fact written to MEMORY.md with [smart]");
-  const count = (memText.match(/- \[smart\] use tabs for indentation/g) || []).length;
+  // v1.4.1：durable 条目不再带 [smart] 标签（写侧停拼 + 防御性剥除）
+  assert(memText.includes("- use tabs for indentation"), "[S4] durable fact written to MEMORY.md without [smart] tag");
+  assert(!memText.includes("[smart]"), "[S4] no [smart] tag leaked to MEMORY.md");
+  const count = (memText.match(/- use tabs for indentation/g) || []).length;
   assert(count === 1, "[S4] durable deduplicated to 1");
 }
 
