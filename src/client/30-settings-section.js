@@ -317,17 +317,23 @@
         ]),
         h("div", { style: cardStyle }, [
           h("p", { style: groupTitleStyle }, t("smartSummary")),
-          // 轮次结束自动记录(summarize)：两种记忆模式的共用总闸门，始终显示，置于记忆模式之上、不随模式切换隐藏。
+          // 轮次结束自动记录(summarize)：三种记忆模式的共用总闸门，始终显示，置于记忆模式之上、不随模式切换隐藏。
           toggle(t("summarizeLabel"), t("summarizeHint"), "summarize"),
-          row(t("memoryModeLabel"), draft.memoryMode === "smart" ? t("memoryModeHintSmart") : t("memoryModeHintPlugin"),
+          row(t("memoryModeLabel"),
+            draft.memoryMode === "smart"
+              ? t("memoryModeHintSmart")
+              : draft.memoryMode === "hybrid"
+                ? t("memoryModeHintHybrid")
+                : t("memoryModeHintPlugin"),
             h("select", {
-              value: draft.memoryMode === "smart" ? "smart" : "plugin",
+              value: ["plugin", "smart", "hybrid"].includes(draft.memoryMode) ? draft.memoryMode : "plugin",
               disabled,
               onChange: (e) => edit("memoryMode", e.target.value),
               style: selectStyle
             }, [
               h("option", { value: "plugin" }, "插件模式"),
-              h("option", { value: "smart" }, "智能模式")
+              h("option", { value: "smart" }, "智能模式"),
+              h("option", { value: "hybrid" }, "混合模式")
             ]), "memoryMode"),
           draft.memoryMode === "smart"
             ? h("div", null, [
@@ -347,9 +353,14 @@
                 row(t("summaryMaxTokensLabel"), t("summaryMaxTokensHint"), h("input", num("summaryMaxTokens")), "summaryMaxTokens"),
                 row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
               ])
-            : h("div", null, [
-                toggle(t("autoCaptureErrorsLabel"), t("autoCaptureErrorsHint"), "autoCaptureErrors")
-              ])
+            : draft.memoryMode === "hybrid"
+              ? h("div", null, [
+                  row(t("reorgCooldownLabel"), t("reorgCooldownHint"), h("input", num("reorgCooldownDays")), "reorgCooldownDays"),
+                  row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
+                ])
+              : h("div", null, [
+                  toggle(t("autoCaptureErrorsLabel"), t("autoCaptureErrorsHint"), "autoCaptureErrors")
+                ])
         ]),
         h("div", { style: cardStyle }, [
           h("p", { style: groupTitleStyle }, t("storage")),

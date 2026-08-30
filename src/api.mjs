@@ -99,6 +99,19 @@ function apiWriteError(res, error) {
   });
 }
 
+// v1.6.0 联动纯函数（可单测）：distillDebugLog=true 时保证 distillLogLevel 存在（默认 info），
+// false 时移除 distillLogLevel。distillLogLevel 是平铺键（不进 UI），由 settings.update 在此兜底。
+export function applyDebugLogLinkage(section) {
+  if (section && typeof section === "object" && !Array.isArray(section)) {
+    if (section.distillDebugLog === true) {
+      if (!section.distillLogLevel) section.distillLogLevel = "info";
+    } else if (section.distillDebugLog === false) {
+      delete section.distillLogLevel;
+    }
+  }
+  return section;
+}
+
 /**
  * @param {{ ctx: object, paths: object, distill: object, state: object, getSettingsFace: () => object | null }} deps
  */
@@ -136,6 +149,10 @@ export function registerApi({ ctx, paths, distill, state, getSettingsFace }) {
               if (section === null || typeof section !== "object" || Array.isArray(section)) {
                 throw Object.assign(new Error("section must be a plain object"), { code: "bad-request", status: 400 });
               }
+              // v1.6.0 联动：distillDebugLog=true 时保证 distillLogLevel 存在（默认 info，保证
+              // 服务端日志开启即输出元数据诊断）；false 时移除 distillLogLevel（防止残留 debug
+              // 级别持续打印 LLM 原始响应文本）。distillLogLevel 是平铺键（不进 UI），在此统一兜底。
+              applyDebugLogLinkage(section);
               if (!face) {
                 throw Object.assign(new Error("settings service is not mounted"), { code: "settings-rejected", status: 503 });
               }

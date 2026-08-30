@@ -205,6 +205,9 @@ export function createRecords({ getConfig, paths }) {
 
   async function prune(dir) {
     const c = cfg();
+    // v1.6.0：hybrid 模式下日志永不过期不删（dailyLogRetentionDays 不可用，定案）——
+    // 日志是子代理维护的证据层，过期并入 MEMORY.md 的旧逻辑在 hybrid 下也不应触达。
+    if (c.memoryMode === "hybrid") return;
     const cutoff = Date.now() - c.dailyLogRetentionDays * 86400000;
     let files = [];
     try {

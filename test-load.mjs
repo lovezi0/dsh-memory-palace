@@ -204,7 +204,7 @@ function dailyFile(ws, dir = ".deepseek-harness/memory") {
 console.log("[1] LOAD");
 const main = await loadPlugin();
 assert(main.captured.sections.length === 1, "[1] 1 section registered");
-assert(main.captured.tools.map((t) => t.name).join(",") === "memory_note,memory_note_user,memory_read,memory_delete", "[1] tools = memory_note,memory_note_user,memory_read,memory_delete");
+assert(main.captured.tools.map((t) => t.name).join(",") === "memory_note,memory_note_user,memory_read,memory_delete,memory_write,memory_update_section,memory_reorganize", "[1] tools = 4 legacy + 3 hybrid (v1.6.0 unconditional registration)");
 assert((main.captured.listeners["session/event"] || []).length === 1, "[1] session/event listener registered");
 assert(inject.includes("llm"), "[1] inject includes 'llm' (smart mode needs it)");
 const text = main.captured.sections[0].text();
@@ -507,7 +507,8 @@ console.log("[M] pre-execute approval gate (native popup)");
   await note.execute({ content: "use tabs for indentation" });
   await note.execute({ content: "use spaces for indentation" });
   const preListeners = captured.listeners["tools/pre-execute"] || [];
-  assert(preListeners.length === 1, "[M] one tools/pre-execute listener registered");
+  // v1.6.0：hybrid 无条件注册后 pre-execute 监听器为 2 个（legacy 删除闸门 + hybrid 写工具闸门）
+  assert(preListeners.length === 2, "[M] two tools/pre-execute listeners registered (legacy + hybrid)");
   const gate = preListeners[0];
   const next = async () => ({ kind: "allow" });
 

@@ -3,10 +3,11 @@
 > **说明文档，非真源。** 本插件所有提示词的真源在 `src/`：
 > - 系统提示词注入：`src/index.mjs`（`text()` 闭包）
 > - 摘要 / 蒸馏 / 关键词：`src/common/prompts.mjs`
+> - hybrid 模式提示词：`src/hybrid/prompts.mjs`（`HYBRID_PROACTIVE` / `SUBAGENT_SYSTEM`）
 > - 失败重试：`src/common/retry.mjs`
 >
 > 改提示词请改源码，**本文件仅作人工可读索引与维护参照**，需与源码同步更新。
-> 适用版本：v1.4.0。
+> 适用版本：v1.6.0-alpha.1。
 
 ---
 
@@ -14,12 +15,14 @@
 
 | 用途 | 名称 | 真源位置 | 注入 / 调用时机 |
 |---|---|---|---|
-| 系统提示词注入 | 记忆公民指令 / 记忆自动维护说明 | `src/index.mjs` `text()` | 每轮 system prompt 拼接注入 |
+| 系统提示词注入 | 记忆公民指令 / 记忆自动维护说明 / 混合模式分工说明 | `src/index.mjs` `text()` | 每轮 system prompt 拼接注入 |
 | 路径简写硬约束 | `antiMangle` | `src/index.mjs` | 随 system prompt 注入（始终） |
 | plan 模式禁写提示 | `planNote` | `src/index.mjs` | 仅 plan 模式激活时追加 |
 | 触发闸门关键词 | `SCENE_KEYWORDS` | `src/common/prompts.mjs` | 结算闸门判定（纯文本轮次触发写） |
 | 智能模式摘要 | `SUMMARY_PROMPT(allowDelete)` | `src/common/prompts.mjs` | 智能模式每轮结束 `summarizeTurn` |
 | 项目记忆蒸馏 | `DISTILL_PROMPT` | `src/common/prompts.mjs` | 手动「蒸馏项目记忆」按钮 |
+| **混合模式分工说明（段二）** | **`HYBRID_PROACTIVE`** | **`src/hybrid/prompts.mjs`** | **hybrid 模式下每轮 system prompt 段二（随 `text()` 注入）** |
+| **记忆子代理 system prompt** | **`SUBAGENT_SYSTEM()`** | **`src/hybrid/prompts.mjs`** | **hybrid 模式每轮 turn/end 触发 `runMemorySubagent`** |
 
 ---
 
@@ -35,13 +38,14 @@
 ### 2.2 路径简写硬约束 `antiMangle`
 > 提及记忆文件路径时一律用 `~` 简写（如 `~/.deepseek-harness/MEMORY.md`），不要逐字拼写绝对路径——你转述绝对路径容易漏掉目录分隔符。
 
-真机踩坑：AI 转述绝对路径曾出现 `lovezi0.deepseek-harness` 缺分隔符，故强制喂 `~` 简写。
+真机踩坑：AI 转述绝对路径曾出现缺分隔符（如 `~/.deepseek-harness` 被拼成 `~.deepseek-harness`），故强制喂 `~` 简写。
 
 ### 2.3 模式分支指令 `proactive`（按 `memoryMode` 切换）
 | 模式 | 注入文案 | 意图 |
 |---|---|---|
 | `smart` | 「你的跨 session 记忆由 LLM 智能摘要自动维护（每轮结束自动提炼摘要并沉淀 durable 事实到 MEMORY.md），无需主动调用 memory_note / memory_note_user；读取全部记忆用 memory_read」 | 关掉主动记，交给摘要链路 |
 | `plugin` | 「记忆公民指令」：列举 5 类**必须**主动落档场景（①完成任务/产出结果 ②修复 bug/根因 ③验证 build/test/CI ④里程碑/决策/约定 ⑤用户偏好约束），判定标准「下个 session 的我还需要吗」，格式「一句话结论 + 关键细节」 | 引导 agent 主动记 |
+| `hybrid` | 「记忆分工说明」`HYBRID_PROACTIVE`：①日志由子代理每轮自动维护（含去重标删），agent 无需记录过程；②MEMORY.md 由 agent 主动调 `memory_write` 维护（章节化）；③项目级仅双门禁满足时可 `memory_reorganize` 全量重整，否则只能 `memory_update_section` 章节级修正；④用户级禁止重整 | 日志/长期记忆职责分离，agent 主写 MEMORY.md |
 
 关键约束：无论模式，`text()` 必须**始终**返回非空（即便无记忆也要注入指令），否则 agent 不知记忆系统存在 → 永不记 → 死循环。
 
@@ -98,6 +102,37 @@ SUMMARY_PROMPT({ allowDelete = false, outputBudget } = {})
 - summary 必须**客观、第三人称、陈述性**；**严禁**提问/提议/请示/寒暄/自我指涉/内心独白/对话体——在写记忆，不在对话。
 - durable 每条必须**可独立成立的客观事实**；严禁把「助手说过的话/未确认提议」当事实。
 - 仅含未决提问无结论 → summary 写「本次对话为未决讨论，暂无确定结论」，durable 留空，绝不照抄对话体。
+
+---
+
+## 四·五、混合模式提示词（v1.6.0 新增）
+
+真源：`src/hybrid/prompts.mjs`。
+
+### 4.5.1 分工说明 `HYBRID_PROACTIVE`（注入段二）
+
+hybrid 模式下注入 system prompt 的「段二」，替代 smart 的「无需主动调用」与 plugin 的「记忆公民指令」。四点分工：
+1. 日志由子代理每轮自动维护（含去重：重复/过时条目删除线标记），agent 无需重复记录过程性信息；
+2. MEMORY.md（项目/用户）由 agent 主动调 `memory_write` 追加（章节化），过时内容用 `memory_update_section` 整章节替换或标删；
+3. 项目级 MEMORY.md 仅「超出注入预算 且 距上次重整 ≥ 冷却期」双条件同时满足才可 `memory_reorganize` 全量重整，重整前先读日志对照、勿丢关键信息；
+4. 用户级 MEMORY.md 禁止全量重整。
+
+### 4.5.2 记忆子代理 system prompt `SUBAGENT_SYSTEM()`
+
+hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.mjs`），子代理执行「判定 + 产出一体」：
+- **判定**：本轮是否有实质内容（完成任务/修 bug/决策/结论/用户偏好）。无重点 → 纯文本收尾（1 次调用，仍推进断点）；有重点 → 工具循环写入日志（2-5 次调用）。
+- **工具白名单**（仅循环内，非 DSH 全局）：
+  - `log_read_section(sections[])`：**一次读取多个章节**（合并返回，未找到的章节注明）——日志回喂超 `subagentLogBudget` 仅给章节目录时按需拉取；prompt 强制要求多章节在单次调用中传齐，避免多轮往返（v1.6.0 A+C 改进）；
+  - `log_write_ops(ops[])`：批量提交 `{op:"new_section"|"append"|"mark_delete", section, entry?, oldText?}`。
+- **日志 ops 规则**（prompt 明文）：
+  - 只能通过 `log_write_ops` 写，禁止重写整文件；三种 op：新增章节 / 章节内追加（upsert，不强行匹配现有章节）/ 标记删除（删除线墓碑，非物理删除）；
+  - 去重是子代理职责：回喂日志中已存在的结论禁止重复追加，语义重复/矛盾用 `mark_delete` 标记过时条目；
+  - 条目格式：一行一条、结论开头 + 关键细节、客观第三人称、禁止标签与对话体。
+- **失败语义**（v1.6.0 定案）：超 6 轮 / 超时 `summaryTimeoutMs` / 模型不支持 tools → **本轮放弃、不降级 `writeLightEntry`**（无格式原文会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。
+
+### 4.5.3 注入侧删除线过滤
+
+v1.6.0 起注入 system prompt 前用 `stripDeletedLines`（`src/common/text.mjs`）剔除**整行**删除线墓碑（`~~...~~`，可带 `- ` 列表符）——文件保留墓碑供审计，注入侧过滤防模型把已作废条目当现行有效；行内局部删除线（`- 旧名 ~~原名~~`）不滤。
 
 ---
 

@@ -17,6 +17,7 @@
 - **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档 — 对标 WorkBuddy 的"智能记一笔"手感。
 - **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志 + durable 事实写 MEMORY.md（v1.4.2 起条目不再带 `[smart]` 标签）。
 - **记忆注入（v1.4.2）**：记忆块仅在会话**首次**构建时注入（DSH 会话自身继承历史轮次，逐轮注入冗余且有过时断言干扰）；发生上下文压缩（compaction）后自动重注。注入按预算截断时保留结构行与**尾部最新条目**（写入追加在尾部，确保最新结论始终可见）。
+- **混合模式（hybrid，v1.6.0）**：记忆子代理在每轮 turn/end 自动把本轮摘要写入**今日工作日志**（章节化组织、回喂今日日志做增量去重、重复/过时条目标删除线墓碑）；MEMORY.md 写入权归还 agent（`memory_write` 章节化追加 / `memory_update_section` 整章节精确替换 / 双门禁内 `memory_reorganize` 全量重整）。hybrid 下日志永不过期（作为证据层保留）。
 - **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
 
 ## 记忆文件布局
@@ -66,6 +67,9 @@ turn/end ──► 轻量兜底闸门
 | `memory_note_user` | 用户级 | 把跨项目偏好写入 `~/.deepseek-harness/MEMORY.md`（去重） |
 | `memory_read` | 聚合 | 一次性读取用户级 + 项目级记忆、今日日志与最近 3 份历史日志 |
 | `memory_delete` | 用户级/项目级/每日级 | 按内容删除记忆条目（两阶段确认：先预览匹配位置与内容，用户确认后再删；删除动作经 harness 原生确认弹窗硬闸门，真人点允许才真正执行） |
+| `memory_write`（hybrid） | 项目级/用户级 | 章节化写入：章节存在则末尾追加，不存在则新建章节（章节化格式规范） |
+| `memory_update_section`（hybrid） | 项目级/用户级 | 整章节精确替换/单条标记删除：oldText 归一化精确匹配防 stale，失败拒绝并回显实际内容 |
+| `memory_reorganize`（hybrid） | 仅项目级 | 全量重整 MEMORY.md：双门禁（超出注入预算 且 距上次重整 ≥ 冷却天数）机器校验，原子替换 + 时间戳注释，用户确认弹窗 |
 
 ## 安装
 
@@ -93,8 +97,6 @@ dsh plugin --profile web add .    # 装入 web profile（profile 名按你的实
 ```bash
 # 直接由 dsh 从 npm 拉取并装入（本机若已配镜像会自动走镜像）
 dsh plugin --profile web add dsh-memory-palace
-# 锁定版本：
-dsh plugin --profile web add dsh-memory-palace@1.4.2-alpha.1
 
 # 或先手动用 npm 安装（显式指定镜像），再装入：
 npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
@@ -118,7 +120,12 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
-- **1.4.2.alpha.1**
+- **1.6.0.alpha.1** *未发布npm*
+    - 🔥新增混合模式(hybrid) *仍默认插件模式，建议切换至混合模式*
+    - 🔥新增记忆子agent处理轮次会话日志
+    - 💪优化记忆文件结构做到真正人类可读
+    - 💪优化调试模式参数保存
+- **1.4.2.alpha.1** *未发布npm*
     - 💪记忆注入：仅首次注入 + compaction 重注
     - 💪优化手动项目蒸馏prompt
     - 💪[smart] 标签全移除
