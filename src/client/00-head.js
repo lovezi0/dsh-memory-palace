@@ -5,6 +5,7 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     let react = require("react");
-    let _deepseek_ai_dsh_client_runtime_client = require("@deepseek-ai/dsh-client-runtime/client");
+    // v1.6.0-rc1：移除 require("@deepseek-ai/dsh-client-runtime/client")——该包在
+    // DSH 0.1.2-alpha.2 已整体删除（原变量赋值后零使用），平台 seed 表的 react 足够。
 
     const NS = "memory-palace";

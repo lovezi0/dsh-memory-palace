@@ -4,6 +4,9 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
+> mian分支已适配**deepseek harness 0.1.2-alpha.2+**
+> 旧版本已切换分支归档，见`dsh-v0.1.x`
+
 ## 特性
 
 - **人类可读的真源**：记忆全部存储在 Markdown 文件中（`MEMORY.md` + 每日日志 `YYYY-MM-DD.md`），任何编辑器可直接修改，数据永远属于你。
@@ -79,7 +82,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.4.2-alpha.1
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.0-rc1
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -120,6 +123,8 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.6.0.rc.1**
+    - 🔥适配deepseek harness 0.1.2-alpha.2
 - **1.6.0.alpha.1** *未发布npm*
     - 🔥新增混合模式(hybrid) *仍默认插件模式，建议切换至混合模式*
     - 🔥新增记忆子agent处理轮次会话日志

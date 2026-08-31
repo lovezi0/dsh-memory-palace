@@ -32,11 +32,8 @@ function stubRequire(spec) {
     moduleCache.set(spec, react);
     return react;
   }
-  if (spec === "@deepseek-ai/dsh-client-runtime/client") {
-    const m = {};
-    moduleCache.set(spec, m);
-    return m;
-  }
+  // v1.6.0-rc1：@deepseek-ai/dsh-client-runtime/client 已被移除引用，未知 spec 继续走 throw
+  // （顺带验证 bundle 无死引用）。
   throw new Error("unexpected require: " + spec);
 }
 
@@ -54,6 +51,13 @@ console.log("inject =", JSON.stringify(exports_.inject));
 const registrations = [];
 const ctx = {
   effect: () => {},
+  // v1.6.0-rc1：模型枚举走 remote.session.modelCatalog（effect 被 stub 成 no-op，实际不触达；
+  // 放这儿防御性兜底）。
+  remote: {
+    session: {
+      modelCatalog: () => Promise.resolve({ ok: false })
+    }
+  },
   locale: {
     register: (ns, dict) => {
       console.log(
@@ -95,6 +99,11 @@ console.log(
   registrations.map((r) => r.name).join(", ")
 );
 
+// v1.6.0-rc1：锁定新 inject 清单（connection 已被 remote + remote.session 取代）。
+const injectFace = exports_.inject;
+if (!Array.isArray(injectFace) || !injectFace.includes("remote") || !injectFace.includes("remote.session") || injectFace.includes("connection")) {
+  throw new Error("FAIL: unexpected inject face: " + JSON.stringify(injectFace));
+}
 const reg = registrations.find((r) => r.name === "settings.section");
 if (!reg) throw new Error("FAIL: settings.section not injected");
 const entry = reg.fn();

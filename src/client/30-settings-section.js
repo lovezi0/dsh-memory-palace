@@ -1,5 +1,27 @@
+    // v1.6.0-rc1：模型枚举改走 ctx.remote.session.modelCatalog()——ApiProxy 包已在
+    // DSH 0.1.2-alpha.2 删除（旧 conn.api.llm.models 死了）。服务缺席 / 非 ok / 异常
+    // 一律降级为空列表，下拉只剩「复用当前会话模型」，UX 不变。
+    async function fetchModelOptions(ctx) {
+      try {
+        const remote = ctx && ctx.remote;
+        if (!remote || !remote.session || typeof remote.session.modelCatalog !== "function") return [];
+        const response = await remote.session.modelCatalog();
+        if (!response || !response.ok || !response.value) return [];
+        const opts = [];
+        for (const g of response.value.groups || []) {
+          for (const m of (g && g.models) || []) {
+            // m.id 已含 provider 前缀（如 nvidia/nemotron-3-ultra-550b-a55b），直接用，避免重复拼接
+            opts.push({ value: m.id, label: (g.name || g.id) + " / " + (m.name || m.id) });
+          }
+        }
+        return opts;
+      } catch (e) {
+        return [];
+      }
+    }
+
     function MemoryPalaceSection(props) {
-      const { t, getConnection } = props;
+      const { t, fetchModels } = props;
       const [remote, setRemote] = react.useState({ value: null, user: {}, revision: undefined, loaded: false });
       const [draft, setDraft] = react.useState(() => projectDraft({ value: null }));
       const [dirty, setDirty] = react.useState(false);
@@ -8,7 +30,7 @@
       const [validation, setValidation] = react.useState(null);
       const [modelOptions, setModelOptions] = react.useState([]);
 
-      // 初始加载（从自有 route 读真实值，绕过 apiproxy allowlist）。
+      // 初始加载（从自有 route 读真实值）。
       react.useEffect(() => {
         let alive = true;
         (async () => {
@@ -34,18 +56,8 @@
         let alive = true;
         (async () => {
           try {
-            const conn = getConnection && getConnection();
-            if (!conn || !conn.api || !conn.api.llm || typeof conn.api.llm.models !== "function") return;
-            const r = await conn.api.llm.models({});
-            const groups = (r && r.result && r.result.value && r.result.value.groups) || (r && r.groups) || [];
-            const opts = [];
-            for (const g of groups || []) {
-              for (const m of (g && g.models) || []) {
-                // m.id 已经包含 provider 前缀（如 nvidia/nemotron-3-ultra-550b-a55b），直接用，避免重复拼接
-                opts.push({ value: m.id, label: g.name + " / " + m.name });
-              }
-            }
-            if (alive) setModelOptions(opts);
+            const opts = await (fetchModels && fetchModels());
+            if (alive) setModelOptions(Array.isArray(opts) ? opts : []);
           } catch (e) {
             /* 枚举失败：保持空列表，下拉只剩「复用当前会话模型」 */
           }
