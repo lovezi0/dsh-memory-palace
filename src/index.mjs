@@ -56,16 +56,16 @@ export const Config = Schema.object({
   // ---- v1.1.0：记忆模式（plugin=记忆公民指令+轮次轻量+错误捕获；smart=LLM 智能会话摘要）----
   // v1.6.0：+hybrid（子 agent 自动维护日志 + agent 主动维护 MEMORY.md），三档并存，切换需重启 dsh。
   memoryMode: Schema.union(["plugin", "smart", "hybrid"]).default("plugin").description("记忆模式：plugin=记忆公民指令+轮次轻量+错误捕获；smart=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md）；hybrid=记忆子代理自动维护今日日志（标删去重）+ agent 主动维护 MEMORY.md（章节化写入/整章节替换/门禁内全量重整）。切换需重启 dsh 生效。"),
-  summaryModel: Schema.string().default("").description("智能模式的摘要模型，留空=复用当前会话 provider/model；也可填 provider/model（如 deepseek/deepseek-chat）固定廉价模型省 token。"),
+  summaryModel: Schema.string().default("").description("记忆插件当前使用的模型（智能模式会话摘要 / 手动蒸馏 / hybrid 记忆子代理共用）。留空=复用当前会话 provider/model；也可填 provider/model（如 deepseek/deepseek-chat）固定廉价模型省 token。"),
   summaryTimeoutMs: Schema.number().default(60000).description("蒸馏 LLM 调用的超时（毫秒），超时视为失败并降级；覆盖智能模式摘要与手动蒸馏两条链路；默认 60000（60s）。"),
   distillDebugLog: Schema.boolean().default(false).description("调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。distillLogLevel=info 时仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；distillLogLevel=debug 会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。"),
   // ---- v1.4.1：蒸馏 stderr 日志级别（平铺键，不进 UI；默认 info；distillDebugLog=true 时生效） ----
   distillLogLevel: Schema.string().default("info").description("蒸馏 stderr 日志级别：info=仅元数据诊断（默认，不打印 LLM 原始响应）；debug=额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。无需 UI 配置，经 profile/settings.yaml 设置 distillLogLevel 键。"),
   // ---- v1.4.0：智能模式最终输出软预算（v1.4.1 起语义变更：prompt 软约束，思考不受限；实际硬上限由模型自身 maxTokens 决定） ----
-  summaryMaxTokens: Schema.number().default(2000).description("智能模式会话摘要 LLM 的【最终输出软预算（prompt 约束，思考不受限）】。默认 2000。实际硬上限由模型自身 maxTokens 决定；可调大以容纳更多 durable 事实。"),
-  projectMaxTokens: Schema.number().default(8000).description("手动「蒸馏项目记忆」LLM 的【最终输出软预算（prompt 约束，思考不受限）】。默认 8000。实际硬上限由模型自身 maxTokens 决定。"),
+  summaryMaxTokens: Schema.number().default(2000).description("会话摘要 LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 2000；可调大以容纳更多 durable 事实。"),
+  projectMaxTokens: Schema.number().default(8000).description("手动「蒸馏项目记忆」LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 8000。"),
   // ---- v1.4.0：蒸馏时回喂存量记忆（特性3，默认关；开启后自动智能模式 turn/end 与手动蒸馏按钮均回喂，delete 仅手动放开） ----
-  feedbackEnabled: Schema.boolean().default(false).description("蒸馏时把项目级 + 用户级 MEMORY.md 全文（逐行编号、无截断）回喂给 LLM，使其能基于既有记忆做 add/replace/delete 增量维护。默认关；开启后自动智能模式（turn/end）与手动蒸馏会话按钮均回喂存量记忆；delete 仍仅手动按钮开放，自动模式跳过（防误删）。hybrid 模式下此开关不参与（子代理自带日志回喂）。"),
+  feedbackEnabled: Schema.boolean().default(false).description("每次蒸馏时把项目级 + 用户级 MEMORY.md 全文（逐行编号、无截断）回喂给 LLM，使其能基于既有记忆做增量维护。delete 仍仅手动蒸馏按钮开放，自动模式跳过（防误删）。hybrid 模式下仅手动触发蒸馏受影响（自动路径走记忆子代理，自带日志回喂）。默认关。"),
   // ---- v1.6.0：hybrid 模式配置（仅 memoryMode=hybrid 时生效） ----
   reorgCooldownDays: Schema.number().default(7).description("hybrid 模式：项目级 MEMORY.md 全量重整的冷却天数（距上次重整）。与「超出注入预算」双条件同时满足才允许 memory_reorganize；时间戳以 HTML 注释落在 MEMORY.md 文件尾。"),
   subagentLogBudget: Schema.number().default(20000).description("hybrid 模式：记忆子代理回喂今日工作日志的字符上限。超出时仅回喂章节目录，子代理用 log_read_section 按需读取章节。"),

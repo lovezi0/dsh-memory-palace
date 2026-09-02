@@ -15,6 +15,7 @@
       wsDirHint: "无 buddy 目录时回退到该目录，默认 .deepseek-harness/memory",
       retentionLabel: "日志保留天数",
       retentionHint: "超过该天数的每日日志会迁移进 MEMORY.md 后删除",
+      retentionHintHybrid: "hybrid 模式下此设置不生效：日志由记忆子代理维护、永不过期不删（证据层），保持完整。",
       userBudgetLabel: "用户级预算（字符）",
       userBudgetHint: "用户级 MEMORY.md 的最大字符数",
       wsBudgetLabel: "工作区预算（字符）",
@@ -31,8 +32,8 @@
       reorgCooldownHint: "项目级 MEMORY.md 全量重整的冷却天数（距上次重整）；与「超出注入预算」双条件同时满足才允许 memory_reorganize。默认 7 天。",
       subagentLogBudgetLabel: "子代理日志回喂预算（字符）",
       subagentLogBudgetHint: "记忆子代理回喂今日工作日志的字符上限；超出时仅回喂章节目录，子代理按需读取章节。默认 20000。",
-      summaryModelLabel: "摘要模型（智能模式）",
-      summaryModelHint: "留空=复用当前会话的 provider/model；也可固定廉价小模型省 token。",
+      summaryModelLabel: "模型",
+      summaryModelHint: "记忆插件当前使用的模型（智能模式会话摘要 / 手动蒸馏 / hybrid 记忆子代理共用）。留空=复用当前会话的 provider/model；也可固定廉价小模型省 token。",
       save: "保存",
       saving: "保存中…",
       discard: "放弃",
@@ -61,12 +62,12 @@
       dev: "开发",
       distillTimeoutLabel: "蒸馏超时（秒）",
       distillTimeoutHint: "单次蒸馏 LLM 调用的超时上限（秒）；超时视为失败并降级。覆盖智能模式摘要与手动蒸馏，默认 60 秒。",
-      summaryMaxTokensLabel: "会话摘要最大 Token（智能模式）",
-      summaryMaxTokensHint: "智能模式会话摘要 LLM 的【最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）】。默认 2000，可调大以容纳更多 durable 事实。",
-      projectMaxTokensLabel: "项目蒸馏输出软预算",
-      projectMaxTokensHint: "手动「蒸馏项目记忆」LLM 的【最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）】。默认 8000。",
-      feedbackEnabledLabel: "蒸馏回喂存量记忆",
-      feedbackEnabledHint: "开启后，自动智能模式（turn/end）与手动蒸馏会话按钮均会把项目级 + 用户级 MEMORY.md 全文（逐行编号、无截断）回喂 LLM，使其能基于既有记忆做 add/replace/delete 增量维护。delete 仅手动蒸馏按钮开放，自动模式跳过（防误删）。默认关。"
+      summaryMaxTokensLabel: "会话摘要最大 Token",
+      summaryMaxTokensHint: "最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 2000，可调大以容纳更多 durable 事实。",
+      projectMaxTokensLabel: "项目蒸馏最大 Token",
+      projectMaxTokensHint: "最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 8000。",
+      feedbackEnabledLabel: "回喂存量记忆",
+      feedbackEnabledHint: "每次蒸馏时附带项目级 + 用户级记忆作为参考，使其能基于既有记忆做增量维护（delete 仅手动蒸馏开放）。混合模式下仅手动触发蒸馏受影响（自动路径走记忆子代理，自带日志回喂）。默认关。"
     };
 
     const en = {
@@ -86,6 +87,7 @@
       wsDirHint: "Used when no buddy dir exists, default .deepseek-harness/memory",
       retentionLabel: "Daily log retention (days)",
       retentionHint: "Older logs are migrated into MEMORY.md then removed",
+      retentionHintHybrid: "Not effective in hybrid mode: daily logs are maintained by the memory sub-agent and never expire (kept intact as an evidence layer).",
       userBudgetLabel: "User budget (chars)",
       userBudgetHint: "Max chars for the user-level MEMORY.md",
       wsBudgetLabel: "Workspace budget (chars)",
@@ -102,8 +104,8 @@
       reorgCooldownHint: "Cooldown days between full reorganizes of the project MEMORY.md; combined with 'over injection budget' both gates must pass for memory_reorganize. Default 7.",
       subagentLogBudgetLabel: "Sub-agent log feed budget (chars)",
       subagentLogBudgetHint: "Max chars of today's daily log fed back to the memory sub-agent; beyond this only the chapter TOC is fed and the sub-agent reads sections on demand. Default 20000.",
-      summaryModelLabel: "Summary model (smart mode)",
-      summaryModelHint: "Leave empty to reuse the current session's provider/model, or pin a cheap model (provider/model) to save tokens.",
+      summaryModelLabel: "Model",
+      summaryModelHint: "The model currently used by the memory plugin (shared by smart-mode session summarization / manual distillation / the hybrid memory sub-agent). Leave empty to reuse the current session's provider/model, or pin a cheap model (provider/model) to save tokens.",
       save: "Save",
       saving: "Saving…",
       discard: "Discard",
@@ -132,10 +134,10 @@
       dev: "Developer",
       distillTimeoutLabel: "Distill timeout (s)",
       distillTimeoutHint: "Timeout (in seconds) for a single distill LLM call; on timeout it fails and degrades. Covers both smart-mode summary and manual distillation. Default 60s.",
-      summaryMaxTokensLabel: "Session summary max tokens (smart mode)",
-      summaryMaxTokensHint: "Smart-mode session summary LLM final output soft budget (prompt constraint, thinking not limited; the actual hard cap is the model's own maxTokens). Default 2000; raise to fit more durable facts.",
-      projectMaxTokensLabel: "Project distill output soft budget",
-      projectMaxTokensHint: "Manual 'distill project memory' LLM final output soft budget (prompt constraint, thinking not limited; actual hard cap is the model's own maxTokens). Default 8000.",
+      summaryMaxTokensLabel: "Session summary max tokens",
+      summaryMaxTokensHint: "Final output soft budget (prompt constraint, thinking not limited; the actual hard cap is the model's own maxTokens). Default 2000; raise to fit more durable facts.",
+      projectMaxTokensLabel: "Project distill max tokens",
+      projectMaxTokensHint: "Final output soft budget (prompt constraint, thinking not limited; actual hard cap is the model's own maxTokens). Default 8000.",
       feedbackEnabledLabel: "Feed existing memory into distillation",
-      feedbackEnabledHint: "When on, both the auto smart-mode (turn/end) and the manual session distillation feed the full project-level + user-level MEMORY.md (line-numbered, no truncation) back to the LLM so it can maintain memory incrementally via add/replace/delete. delete is only allowed via the manual distill button; auto mode skips it (to avoid accidental memory loss). Off by default."
+      feedbackEnabledHint: "Feed the project-level + user-level memory in as reference on every distillation so the LLM can maintain existing memory incrementally (delete is only allowed via manual distillation). In hybrid mode only manual distillation is affected (the automatic path runs through the memory sub-agent, which feeds the log itself). Off by default."
     };

@@ -347,38 +347,42 @@
               h("option", { value: "smart" }, "智能模式"),
               h("option", { value: "hybrid" }, "混合模式")
             ]), "memoryMode"),
-          draft.memoryMode === "smart"
+          draft.memoryMode === "hybrid"
             ? h("div", null, [
-                row(t("summaryModelLabel"), t("summaryModelHint"),
-                  h("select", {
-                    // 已存储值不在下拉选项内（如旧版双前缀脏数据）→ 归零为「复用当前会话模型」，
-                    // 避免 select 显示悬空值、保存时又把脏值写回 settings.yaml。
-                    value: modelOptions.some((o) => o.value === draft.summaryModel) ? draft.summaryModel : "",
-                    disabled,
-                    style: selectStyle,
-                    onChange: (e) => edit("summaryModel", e.target.value)
-                  }, [
-                    h("option", { value: "" }, "复用当前会话模型"),
-                    ...modelOptions.map((o) => h("option", { value: o.value }, o.label))
-                  ]), "summaryModel"),
-                toggle(t("feedbackEnabledLabel"), t("feedbackEnabledHint"), "feedbackEnabled"),
-                row(t("summaryMaxTokensLabel"), t("summaryMaxTokensHint"), h("input", num("summaryMaxTokens")), "summaryMaxTokens"),
-                row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
+                row(t("reorgCooldownLabel"), t("reorgCooldownHint"), h("input", num("reorgCooldownDays")), "reorgCooldownDays"),
+                row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
               ])
-            : draft.memoryMode === "hybrid"
+            : draft.memoryMode === "plugin"
               ? h("div", null, [
-                  row(t("reorgCooldownLabel"), t("reorgCooldownHint"), h("input", num("reorgCooldownDays")), "reorgCooldownDays"),
-                  row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
-                ])
-              : h("div", null, [
                   toggle(t("autoCaptureErrorsLabel"), t("autoCaptureErrorsHint"), "autoCaptureErrors")
                 ])
+              : null,
+          // ---- v1.6.3：蒸馏/模型参数提为常显（三模式共用，不受 memoryMode 限制）----
+          // summaryModel 同时被智能摘要与 hybrid 记忆子代理读取（subagent resolveModel）；
+          // summaryMaxTokens/projectMaxTokens/feedbackEnabled 覆盖自动摘要 + 手动蒸馏两条链路。
+          h("div", null, [
+            row(t("summaryModelLabel"), t("summaryModelHint"),
+              h("select", {
+                // 已存储值不在下拉选项内（如旧版双前缀脏数据）→ 归零为「复用当前会话模型」，
+                // 避免 select 显示悬空值、保存时又把脏值写回 settings.yaml。
+                value: modelOptions.some((o) => o.value === draft.summaryModel) ? draft.summaryModel : "",
+                disabled,
+                style: selectStyle,
+                onChange: (e) => edit("summaryModel", e.target.value)
+              }, [
+                h("option", { value: "" }, "复用当前会话模型"),
+                ...modelOptions.map((o) => h("option", { value: o.value }, o.label))
+              ]), "summaryModel"),
+            toggle(t("feedbackEnabledLabel"), t("feedbackEnabledHint"), "feedbackEnabled"),
+            row(t("summaryMaxTokensLabel"), t("summaryMaxTokensHint"), h("input", num("summaryMaxTokens")), "summaryMaxTokens"),
+            row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
+          ])
         ]),
         h("div", { style: cardStyle }, [
           h("p", { style: groupTitleStyle }, t("storage")),
           row(t("userPathLabel"), t("userPathHint"), h("input", { ...num("userMemoryPath"), type: "text" }), "userMemoryPath"),
           row(t("wsDirLabel"), t("wsDirHint"), h("input", { ...num("workspaceMemoryDir"), type: "text" }), "workspaceMemoryDir"),
-          row(t("retentionLabel"), t("retentionHint"), h("input", num("dailyLogRetentionDays")), "dailyLogRetentionDays"),
+          row(t("retentionLabel"), draft.memoryMode === "hybrid" ? t("retentionHintHybrid") : t("retentionHint"), h("input", num("dailyLogRetentionDays")), "dailyLogRetentionDays"),
           row(t("userBudgetLabel"), t("userBudgetHint"), h("input", num("userBudgetChars")), "userBudgetChars"),
           row(t("wsBudgetLabel"), t("wsBudgetHint"), h("input", num("workspaceBudgetChars")), "workspaceBudgetChars")
         ]),

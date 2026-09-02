@@ -17,6 +17,7 @@ import { HYBRID_PROACTIVE, SUBAGENT_SYSTEM } from "./prompts.mjs";
 export { HYBRID_PROACTIVE };
 
 const MAX_ROUNDS = 6; // 循环轮次上限（含首轮）；超限降级
+const MAX_RETRY = 3;  // 未知工具触发的催促重试预算（v1.6.3，人定）
 const SURFACE = new Set(["user/message", "assistant/message", "tool/result"]);
 
 // 日志文件写锁（全局 promise 链串行化）：子 agent 落盘与手动蒸馏按钮/其他写路径并发防护。
@@ -146,7 +147,16 @@ async function execLoopTool(block, logFiles, cfg) {
       if (!ops.length) return { ok: false, message: "ops 为空。" };
       return await applyLogOps(logFiles, todayISO(), ops);
     }
-    return { ok: false, message: `未知工具 ${name}（仅 log_read_section / log_write_ops 可用）。` };
+    return {
+      ok: false,
+      unknown: true,
+      name,
+      message:
+        `工具 ${name} 不存在，调用已拒绝。本环境仅提供两个工具：\n` +
+        `- log_write_ops：写入今日日志（ops 数组，支持 append / new_section / mark_delete）\n` +
+        `- log_read_section：读取今日日志中指定章节（sections 数组）\n` +
+        `请立即改用 log_write_ops 提交 ops 完成本轮写入；不要调用其他工具，也不要直接结束。`,
+    };
   } catch (e) {
     return { ok: false, message: `执行失败：${e?.message || String(e)}` };
   }
@@ -214,7 +224,7 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
   // 调试日志（v1.6.0）：与 distill.mjs 同款门控。dbgFail=失败/跳过留痕（无条件输出，排障可观测）；
   // dbg=受 distillDebugLog 开关控制的详单（模型解析/请求参数/流进度/ops 结果计数）。
   // 隐私红线：只打计数/字符数/元数据/错误 message，绝不打印对话或日志正文文本。
-  const dbgFail = (why, extra) => console.error(`[memory-palace] subagent skip: ${why}`, extra ? JSON.stringify(extra) : "");
+  const dbgFail = (why, extra) => console.error(`[memory-palace] subagent warn: ${why}`, extra ? JSON.stringify(extra) : "");
   const dbg = (why, extra) => { if (!cfg.distillDebugLog) return; console.error(`[memory-palace][debug] subagent ${why}`, extra !== undefined ? JSON.stringify(extra) : ""); };
   if (!cfg.enabled || !session || !dirs.length) {
     dbgFail("disabled or no session/dirs", { enabled: !!cfg.enabled, hasSession: !!session, dirs: dirs.length });
@@ -308,12 +318,47 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
   const timeoutMs = cfg.summaryTimeoutMs || 60000;
 
   try {
+    // v1.6.3：本轮工具执行统计——appliedWrites=成功落盘 ops 数、toolAttempts=调用过工具次数、
+    // unknownHits/unknownNames=误调未知工具次数与点名（供 stop 三态判定与催促重试文案）。
+    let appliedWrites = 0;
+    let toolAttempts = 0;
+    let unknownHits = 0;
+    let retries = 0;
+    const unknownNames = new Set();
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const { finish, asm } = await streamTurn(ctx, { provider, model, system, messages, tools }, timeoutMs);
       if (finish.kind === "stop") {
-        state.lastSummarizedSeq = session.seq;
-        dbg("done", { round, mode: round === 0 ? "noop" : "written" });
-        return { ok: true, mode: round === 0 ? "noop" : "written" };
+        // v1.6.3 stop 三态判定（修复：误调未知工具后模型直接收尾 → 日志丢失且断点被无脑推进）。
+        // ① 有落盘 → 正常完成，推进断点。
+        if (appliedWrites > 0) {
+          state.lastSummarizedSeq = session.seq;
+          dbg("done", { round, mode: "written", appliedWrites });
+          return { ok: true, mode: "written" };
+        }
+        // ② 从未调用任何工具 → 模型判定本轮无实质内容（noop），推进断点。
+        if (toolAttempts === 0) {
+          state.lastSummarizedSeq = session.seq;
+          dbg("done", { round, mode: "noop" });
+          return { ok: true, mode: "noop" };
+        }
+        // ③ 命中过未知工具且零写入 → 回告工具清单 + 催促重试（预算 MAX_RETRY 次）。
+        if (unknownHits > 0 && retries < MAX_RETRY) {
+          retries++;
+          const names = [...unknownNames].join("、");
+          messages.push(createUserMessage({
+            content: [{ type: "text", text:
+              `你刚才调用了不存在的工具（${names}），且尚未向日志写入任何内容，任务未完成。\n` +
+              `本轮唯一可用的写入工具是 log_write_ops（ops 支持 append / new_section / mark_delete）；` +
+              `需要读取章节时用 log_read_section。请立即重新提交写入。\n` +
+              `若你重新判定本轮确实没有值得记录的内容，请输出一行纯文本说明后结束。` }],
+            source: { kind: "plugin", plugin: "memory-palace" },
+          }));
+          dbgFail("retry after unknown tool", { retries, names });
+          continue;
+        }
+        // ④ 重试预算耗尽 / 已知工具用错后自主放弃 → 零写入，不推进断点（下一轮 turn/end 补蒸）。
+        dbgFail("no write applied", { round, toolAttempts, unknownHits, retries });
+        return { ok: false, mode: "no-write" };
       }
       if (finish.kind !== "tool-calls") {
         // max-tokens 等异常收尾：返回失败，断点不推进——下一次 turn/end 子代理自动补蒸。
@@ -325,7 +370,13 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
       const calls = asm.blocks().filter((b) => b.type === "tool-call");
       dbg("tool-calls round", { round, calls: calls.length, names: calls.map((c) => c.name) });
       for (const call of calls) {
+        toolAttempts++;
         const result = await execLoopTool(call, logFiles, cfg);
+        if (result.unknown) {
+          unknownHits++;
+          unknownNames.add(call.name);
+        }
+        if (result.ok && result.applied > 0) appliedWrites += result.applied;
         const body = result.ok && result.content !== undefined ? String(result.content) : JSON.stringify(result);
         messages.push(
           createToolResultMessage({

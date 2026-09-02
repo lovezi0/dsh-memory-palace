@@ -265,6 +265,117 @@ section("② 记忆子 agent 循环（mock LLM）");
     ok("场景E：log_read_section 多章节合并读取");
     rmSync(join(logDir, `${today}.md`), { force: true });
   }
+
+  // 场景 F（v1.6.3 用例A）：误调未知工具 run_code → 自纠改用 log_write_ops → stop
+  // 期望：appliedWrites>0、mode="written"、断点推进、日志实际落盘。
+  {
+    const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+    let n = 0;
+    let sawUnknownReject = false;
+    const ctx = {
+      llm: {
+        listProviders: () => [],
+        listModels: async () => [],
+        stream: async function* (params) {
+          const last = params.messages[params.messages.length - 1];
+          // round1 起应回喂到 run_code 被拒的 tool-result（unknown 拒绝文案），形状不假设，全量 JSON 匹配
+          if (n >= 1 && JSON.stringify(last).includes("工具 run_code 不存在")) sawUnknownReject = true;
+          n++;
+          if (n === 1) {
+            yield { type: "block-start", index: 0, blockType: "tool-call" };
+            yield { type: "tool-call-delta", index: 0, id: "call_rc", name: "run_code", argumentsDelta: "{}" };
+            yield { type: "block-end", index: 0, block: { type: "tool-call", id: "call_rc", name: "run_code", arguments: "{}" } };
+            yield { type: "finish", reason: { kind: "tool-calls" } };
+          } else if (n === 2) {
+            yield { type: "block-start", index: 0, blockType: "tool-call" };
+            yield { type: "tool-call-delta", index: 0, id: "call_w", name: "log_write_ops", argumentsDelta: '{"ops":[{"op":"append","section":"幻觉自纠","entry":"误调 run_code 被拒后自纠改用 log_write_ops 落盘"}]}' };
+            yield { type: "block-end", index: 0, block: { type: "tool-call", id: "call_w", name: "log_write_ops", arguments: '{"ops":[{"op":"append","section":"幻觉自纠","entry":"误调 run_code 被拒后自纠改用 log_write_ops 落盘"}]}' } };
+            yield { type: "finish", reason: { kind: "tool-calls" } };
+          } else {
+            yield { type: "block-start", index: 0, blockType: "text" };
+            yield { type: "block-end", index: 0, block: { type: "text", text: "已写入。" } };
+            yield { type: "finish", reason: { kind: "stop" } };
+          }
+        },
+      },
+    };
+    const state = { lastSummarizedSeq: 0 };
+    const r = await runMemorySubagent({ ctx, getConfig: cfg, paths: null, records: null, state, session: mkSession(baseEvents), dirs: [logDir], isError: false });
+    assert.equal(r.ok, true, "自纠成功应返回 ok");
+    assert.equal(r.mode, "written", "应判 written");
+    assert.equal(state.lastSummarizedSeq, 2, "断点应推进");
+    const content = readFileSync(join(logDir, `${today}.md`), "utf8");
+    assert.ok(content.includes("## 幻觉自纠"), "应写入章节");
+    assert.ok(content.includes("自纠改用 log_write_ops"), "应写入条目");
+    assert.ok(sawUnknownReject, "模型应收到过 run_code 被拒的 tool-result（unknown 标记文案）");
+    ok("场景F：未知工具 run_code 被拒 → 自纠 log_write_ops 落盘 + 断点推进");
+    rmSync(join(logDir, `${today}.md`), { force: true });
+  }
+
+  // 场景 G（v1.6.3 用例B）：误调未知工具 run_code 后模型反复纯文本收尾（放弃），重试预算耗尽
+  // 期望：mode="no-write"（ok:false）、断点不推进、dbgFail("no write applied") 被调、催促发生 ≤3 次。
+  {
+    const stderr = [];
+    const origErr = console.error;
+    console.error = (...a) => stderr.push(a.map(String).join(" "));
+    let n = 0;
+    try {
+      const ctx = {
+        llm: {
+          listProviders: () => [],
+          listModels: async () => [],
+          stream: async function* () {
+            n++;
+            if (n === 1) {
+              // 第 0 轮误调未知工具
+              yield { type: "block-start", index: 0, blockType: "tool-call" };
+              yield { type: "tool-call-delta", index: 0, id: "call_rc", name: "run_code", argumentsDelta: "{}" };
+              yield { type: "block-end", index: 0, block: { type: "tool-call", id: "call_rc", name: "run_code", arguments: "{}" } };
+              yield { type: "finish", reason: { kind: "tool-calls" } };
+            } else {
+              // 之后每轮都纯文本收尾（模型拒绝再写）
+              yield { type: "block-start", index: 0, blockType: "text" };
+              yield { type: "block-end", index: 0, block: { type: "text", text: "无内容" } };
+              yield { type: "finish", reason: { kind: "stop" } };
+            }
+          },
+        },
+      };
+      const state = { lastSummarizedSeq: 0 };
+      const r = await runMemorySubagent({ ctx, getConfig: cfg, paths: null, records: null, state, session: mkSession(baseEvents), dirs: [logDir], isError: false });
+      assert.equal(r.ok, false, "重试耗尽应失败");
+      assert.equal(r.mode, "no-write", "应判 no-write");
+      assert.equal(state.lastSummarizedSeq, 0, "断点不应推进");
+      assert.ok(stderr.some((l) => l.includes("no write applied")), "应触发 dbgFail no write applied");
+      const urges = stderr.filter((l) => l.includes("retry after unknown tool")).length;
+      assert.equal(urges, 3, `催促应恰好 3 次（MAX_RETRY），实际 ${urges}`);
+      ok("场景G：未知工具 + 反复放弃 → 催促 3 次后 no-write + 断点不推进");
+    } finally {
+      console.error = origErr;
+    }
+  }
+
+  // 场景 H（v1.6.3 用例C）：第 0 轮直接 stop（无工具调用）→ noop
+  // 回归保护：防止三态判定改坏正常"无重点收尾"路径。
+  {
+    const ctx = {
+      llm: {
+        listProviders: () => [],
+        listModels: async () => [],
+        stream: async function* () {
+          yield { type: "block-start", index: 0, blockType: "text" };
+          yield { type: "block-end", index: 0, block: { type: "text", text: "闲聊，无实质内容。" } };
+          yield { type: "finish", reason: { kind: "stop" } };
+        },
+      },
+    };
+    const state = { lastSummarizedSeq: 0 };
+    const r = await runMemorySubagent({ ctx, getConfig: cfg, paths: null, records: null, state, session: mkSession(baseEvents), dirs: [logDir], isError: false });
+    assert.equal(r.ok, true, "无内容应成功");
+    assert.equal(r.mode, "noop", "应判 noop");
+    assert.equal(state.lastSummarizedSeq, 2, "断点应推进");
+    ok("场景H：无工具直接 stop → noop + 断点推进（回归保护）");
+  }
 }
 
 // ---------- ②b 调试日志联动 ----------

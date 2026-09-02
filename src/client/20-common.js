@@ -1,4 +1,4 @@
-    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "summaryMaxTokens", "projectMaxTokens"]);
+    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "summaryMaxTokens", "projectMaxTokens", "reorgCooldownDays", "subagentLogBudget"]);
     const FIELD_BOOL = new Set(["bridgeBuddyMemory", "summarize", "autoCaptureErrors", "distillDebugLog", "feedbackEnabled"]);
 
     function projectDraft(snap) {
@@ -19,6 +19,8 @@
         summaryModel: v.summaryModel || "",
         summaryMaxTokens: v.summaryMaxTokens != null ? String(v.summaryMaxTokens) : "2000",
         projectMaxTokens: v.projectMaxTokens != null ? String(v.projectMaxTokens) : "8000",
+        reorgCooldownDays: v.reorgCooldownDays != null ? String(v.reorgCooldownDays) : "7",
+        subagentLogBudget: v.subagentLogBudget != null ? String(v.subagentLogBudget) : "20000",
         feedbackEnabled: v.feedbackEnabled === false ? "false" : "true"
       };
     }
