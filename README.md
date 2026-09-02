@@ -82,7 +82,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.0
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.2-alpha.2
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -123,6 +123,11 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.6.2**
+    - **1.6.2.alpha.2**
+        - 原1.6.0发布
+- **1.6.1**
+    - 原1.6.0.alpha.1发布
 - **1.6.0**
     - 🔥适配deepseek harness 0.1.2-alpha.2
 - **1.6.0.alpha.1** *未发布npm*
