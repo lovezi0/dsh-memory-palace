@@ -30,6 +30,7 @@ import { todayISO, expandHome, toHomeShort, readMdSync, budgetClip, stripSmartTa
 import { SCENE_KEYWORDS } from "./common/prompts.mjs";
 import { createPaths } from "./common/paths.mjs";
 import { createRecords } from "./common/records.mjs";
+import { eventsFrom } from "./common/session.mjs";
 import { createDistill } from "./distill.mjs";
 import { registerTools } from "./tools.mjs";
 import { registerApi } from "./api.mjs";
@@ -298,10 +299,12 @@ export function apply(ctx, config) {
       // v1.1.3 修复：turnBuffer 字符上限（30k）仍可能截断超长工具型 request，导致 hasTool 误判为
       // false（tool 块被裁剪）→ 结算闸门误关 → 记忆整体丢失。智能模式闸门改用 session 事件增量
       // （真实完整信号，不依赖会被裁剪的 turnBuffer）。
-      if (!baseGateOpen && state.activeSession && state.activeSession.events) {
+      // v1.6.2-alpha.4：宿主 0.1.2-alpha.4 删除 Session.events getter，事件读取统一走
+      // eventsFrom 兼容层（snapshotEvents 半开区间，旧宿主回退 events+filter）。
+      if (!baseGateOpen && state.activeSession) {
         const SURFACE = new Set(["user/message", "assistant/message", "tool/result"]);
-        const newEvents = state.activeSession.events.filter(
-          (e) => e.seq >= state.lastSummarizedSeq && SURFACE.has(e.type),
+        const newEvents = eventsFrom(state.activeSession, state.lastSummarizedSeq).filter(
+          (e) => SURFACE.has(e.type),
         );
         if (newEvents.some((e) => e.type === "tool/result")) baseGateOpen = true;
       }
