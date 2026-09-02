@@ -79,7 +79,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.4.2-alpha.1
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.1
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -120,6 +120,8 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.6.1**
+    - 原1.6.0.alpha.1发布
 - **1.6.0.alpha.1** *未发布npm*
     - 🔥新增混合模式(hybrid) *仍默认插件模式，建议切换至混合模式*
     - 🔥新增记忆子agent处理轮次会话日志
