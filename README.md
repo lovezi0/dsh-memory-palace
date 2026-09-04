@@ -2,25 +2,21 @@
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-
-> mian分支已适配**deepseek harness 0.1.2-alpha.2+**
-> 旧版本已切换分支归档，见`dsh-v0.1.x`
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&color=CB3837&labelColor=4D6BFE)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.2-rc.1](https://img.shields.io/badge/DeepSeek%20Harness-0.1.2--rc.1-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
 ## 特性
 
 - **人类可读的真源**：记忆全部存储在 Markdown 文件中（`MEMORY.md` + 每日日志 `YYYY-MM-DD.md`），任何编辑器可直接修改，数据永远属于你。
 - **双层记忆**：用户级（跨项目个人偏好，默认 `~/.deepseek-harness/MEMORY.md`）+ 工作区级（项目约定，默认 `<cwd>/.deepseek-harness/memory/`）。
-- **自动读写**：每轮对话将记忆注入系统提示词；每轮结束自动把轻量记录追加进当日日志。
 - **日志迁移**：超过保留天数（默认 30 天）的每日日志自动迁移进 `MEMORY.md` 后删除，长期记忆持续沉淀。
 - **WorkBuddy / CodeBuddy 桥接**：项目已存在 `.workbuddy/memory` 或 `.codebuddy/memory` 时直接读写这些目录，无需重复维护记忆。
 - **记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取）、`memory_delete`（按内容删除，两阶段确认），全部内置去重，防止重复追加。
 - **会话标题栏「记忆」按钮**：支持手动蒸馏：①蒸馏会话 / ②蒸馏项目记忆。
 - **设置页集成**：DSH 设置中内置「记忆」面板（中英双语），所有配置均可图形化调整，无需改配置文件。
 - **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档 — 对标 WorkBuddy 的"智能记一笔"手感。
-- **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志 + durable 事实写 MEMORY.md（v1.4.2 起条目不再带 `[smart]` 标签）。
-- **记忆注入（v1.4.2）**：记忆块仅在会话**首次**构建时注入（DSH 会话自身继承历史轮次，逐轮注入冗余且有过时断言干扰）；发生上下文压缩（compaction）后自动重注。注入按预算截断时保留结构行与**尾部最新条目**（写入追加在尾部，确保最新结论始终可见）。
-- **混合模式（hybrid，v1.6.0）**：记忆子代理在每轮 turn/end 自动把本轮摘要写入**今日工作日志**（章节化组织、回喂今日日志做增量去重、重复/过时条目标删除线墓碑）；MEMORY.md 写入权归还 agent（`memory_write` 章节化追加 / `memory_update_section` 整章节精确替换 / 双门禁内 `memory_reorganize` 全量重整）。hybrid 下日志永不过期（作为证据层保留）。
+- **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志 + durable 事实写 MEMORY.md。
+- **记忆注入**：记忆块仅在会话**首次**构建时注入（DSH 会话自身继承历史轮次，逐轮注入冗余且有过时断言干扰）；发生上下文压缩（compaction）后自动重注。
+- **混合模式（子Agent+主Agent混合处理 🔥推荐）**：记忆子代理在每轮 turn/end 自动把本轮摘要写入**今日工作日志**（章节化组织、回喂今日日志做增量去重、重复/过时条目标删除线墓碑）；MEMORY.md 写入权归还 agent（`memory_write` 章节化追加 / `memory_update_section` 整章节精确替换 / 双门禁内 `memory_reorganize` 全量重整）。
 - **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
 
 ## 记忆文件布局
@@ -82,7 +78,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.3-alpha.4
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.3
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -124,6 +120,7 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.6.3**
+    - npm publish
     - **1.6.3.alpha.4**
         - 🐛修复三种记忆模式配置互串的问题
         - 🐛修复记忆子agent工具幻觉问题
