@@ -119,11 +119,10 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.7.0**
-    - **1.7.0.alpha.1**
-        - 🔥新增独立通道注入记忆文件
-        - 🐛修复存在多种记忆路径时读取冲突的问题
-        - 💪优化记忆子 agent 投影消息节省 token
-        - 💪优化 SUBAGENT_SYSTEM 记忆输出格式
+    - 🔥新增独立通道注入记忆文件
+    - 🐛修复存在多种记忆路径时读取冲突的问题
+    - 💪优化记忆子 agent 投影消息节省 token
+    - 💪优化 SUBAGENT_SYSTEM 记忆输出格式
 - **1.6.3**
     - npm publish
     - **1.6.3.alpha.4**
