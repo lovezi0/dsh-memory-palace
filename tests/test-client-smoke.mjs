@@ -8,7 +8,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, "lib", "client.js"), "utf8");
+// 本文件位于 tests/ 下，lib 在仓库根，需向上一级。
+const src = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
 
 let loaded = null;
 global.window = {

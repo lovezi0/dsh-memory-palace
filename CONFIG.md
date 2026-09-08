@@ -14,7 +14,7 @@
 | 桥接 Buddy 记忆 | `bridgeBuddyMemory` | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
 | Buddy 记忆目录列表 | `buddyWorkspaceMemoryDirs` | `[".workbuddy/memory", ".codebuddy/memory"]` | 要桥接的 buddy 目录列表（按优先级，已存在的全部同步写入） |
 
-> **桥接规则**：`bridgeBuddyMemory` 开启时，只要项目里存在任一 buddy 记忆目录，就**只**读写这些目录，不再创建 `.deepseek-harness/memory/`；全部不存在时才回退到 dsh 目录。buddy 目录绝不被主动创建。
+> **桥接规则**：`bridgeBuddyMemory` 开启时，**读取**恒含 dsh 原生目录，并叠加所有已存在的 buddy 目录（顺序 `.deepseek-harness` > `.workbuddy` > `.codebuddy`）；**写入**优先 buddy 目录，都不存在时才回退 dsh 目录。buddy 目录绝不被主动创建。
 
 ## 自动记录（设置页「记忆 → 自动记录」卡片）
 
@@ -36,11 +36,11 @@
 |---|---|---|---|
 | 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖智能模式摘要与手动蒸馏两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
 | 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。info 级别仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；配合 `distillLogLevel=debug`（见下）会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障。平时关闭 |
-| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile/settings.yaml 设置。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（旧版忽略未知键不崩） |
+| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile/settings.yaml 设置。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
 
-> **设置保存（v1.1.4 起）**：设置页保存已**真正落盘**
+> **设置保存**：设置页保存**真正落盘**（写入 settings.yaml），无需改配置文件。
 >
-> 历史方案（仍可用作兜底）：直接在 profile 的 `cordis.patch.yml` 注入配置（id-targeted config override，与插件 bundle insert 的 id 一致）：
+> 备用方式：直接在 profile 的 `cordis.patch.yml` 注入配置（id-targeted config override，与插件 bundle insert 的 id 一致）：
 >
 > ```yaml
 > - id: memory-palace

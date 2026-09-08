@@ -11,7 +11,7 @@ import { join, dirname } from "node:path";
 import { BlockAssembler, createUserMessage, createToolResultMessage } from "@deepseek-ai/dsh-llm";
 import { todayISO, readMdSync } from "../common/text.mjs";
 import { eventsFrom } from "../common/session.mjs";
-import { appendToSectionText, upsertSectionText, createSectionText, markEntryDeletedText, parseSections, locateSection } from "../common/sections.mjs";
+import { appendToSectionText, upsertSectionText, createSectionText, markEntryDeletedText, parseSections, locateSection, ensureLogHeader } from "../common/sections.mjs";
 import { HYBRID_PROACTIVE, SUBAGENT_SYSTEM } from "./prompts.mjs";
 
 export { HYBRID_PROACTIVE };
@@ -69,12 +69,26 @@ async function streamTurn(ctx, params, timeoutMs) {
 
 // 把本轮 surface 事件投影为消息数组（seq >= fromSeq；与 distillSessionCore 同源逻辑）。
 // v1.6.2-alpha.4：eventsFrom 兼容层（宿主 0.1.2-alpha.4 删除 Session.events getter）。
-function projectTurnMessages(session, fromSeq) {
+// v1.7.0 特性3（投影去噪）：user 侧排除【注入类消息】，只留真实用户对话。
+// 旧实现只看事件类型不看 source，导致首轮 lastSummarizedSeq 较小时把 agent-instructions
+// baseline（AGENTS.md，可达 ~19k 字符）、system-prompt 快照、skill-catalog、以及本插件
+// 自己的 E 投影全部当成"本轮对话"喂给子 agent（污染日志 + 白烧 token）。
+// 判定用【黑名单】而非白名单（fail-open）：source 存在且非 'user' 才排除——
+// 注入类消息（agent-instructions / plugin / skill-catalog / skill-invocation …）在 DSH 中
+// 必带 source.kind，故排除效果与白名单等价；而 source 缺失时保留，避免误丢真实用户请求
+// 导致子 agent 空转（与 index.mjs 的 turnBuffer 采集口径保持一致）。
+// assistant/message 与 tool/result 原样保留。
+// 导出供单测直接断言（tests/test-v1.7.0.mjs），运行时仍只在 runMemorySubagent 内调用。
+export function projectTurnMessages(session, fromSeq) {
   const hist = [];
   for (const e of eventsFrom(session, fromSeq)) {
     if (!SURFACE.has(e.type)) continue;
     const m = session.deriveEventMessage ? session.deriveEventMessage(e) : null;
-    if (m) hist.push(m);
+    if (!m) continue;
+    // deriveEventMessage 对 user/message 直接返回 event.data（含 source），故此处可安全读取。
+    const srcKind = m.source?.kind;
+    if (e.type === "user/message" && srcKind && srcKind !== "user") continue;
+    hist.push(m);
   }
   return hist;
 }
@@ -205,9 +219,12 @@ function applyLogOps(logFiles, dateStr, ops) {
         md = readFileSync(file, "utf8");
       } catch { /* 文件尚不存在 */ }
       const { cur, results } = apply(md);
-      if (cur !== md) {
+      // v1.7.0 特性4：落盘前确保文件头为规范 `# YYYY-MM-DD`（空文件/首行空/直接以 ## 开头
+      // 三种形态都会补上；已有同日标题则原样）。仅在写入时补齐，不回填历史文件。
+      const withHeader = ensureLogHeader(cur, dateStr);
+      if (withHeader !== md) {
         await mkdir(dirname(file), { recursive: true });
-        await writeFile(file, cur, "utf8");
+        await writeFile(file, withHeader, "utf8");
       }
       all.push(...results);
     }

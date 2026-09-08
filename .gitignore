@@ -31,3 +31,6 @@ upgrade plan/
 
 # Agent 开发指南（含本机私有路径，不开源）
 AGENTS.md
+
+# DSH 契约追踪（含本机路径与版本基线，本地专用，不进仓库）
+DSH-CONTRACT-TRACKING.md

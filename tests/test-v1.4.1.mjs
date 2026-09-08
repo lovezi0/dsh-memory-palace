@@ -1,7 +1,7 @@
 // v1.4.1 单测：budgetClip（结构行 + 尾部最新条目）与 stripSmartTag（行首标签剥除）。
 // 运行：/usr/bin/env -u NODE_OPTIONS node test-v1.4.1.mjs
 import assert from "node:assert/strict";
-import { budgetClip, stripSmartTag } from "./src/common/text.mjs";
+import { budgetClip, stripSmartTag } from "../src/common/text.mjs";
 
 // ---------- budgetClip ----------
 

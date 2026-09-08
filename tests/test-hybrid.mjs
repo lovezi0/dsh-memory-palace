@@ -8,10 +8,10 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSy
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { parseSections, locateSection, appendToSectionText, upsertSectionText, createSectionText, replaceSectionText, markEntryDeletedText } from "./lib/common/sections.mjs";
-import { stripDeletedLines } from "./lib/common/text.mjs";
-import { runMemorySubagent } from "./lib/hybrid/subagent.mjs";
-import { checkReorgGate, readLastReorg } from "./lib/hybrid/tools.mjs";
+import { parseSections, locateSection, appendToSectionText, upsertSectionText, createSectionText, replaceSectionText, markEntryDeletedText } from "../lib/common/sections.mjs";
+import { stripDeletedLines } from "../lib/common/text.mjs";
+import { runMemorySubagent } from "../lib/hybrid/subagent.mjs";
+import { checkReorgGate, readLastReorg } from "../lib/hybrid/tools.mjs";
 
 let passed = 0;
 function ok(name) { passed++; console.log(`  ✓ ${name}`); }
@@ -381,7 +381,7 @@ section("② 记忆子 agent 循环（mock LLM）");
 // ---------- ②b 调试日志联动 ----------
 section("②b distillLogLevel 联动（settings.update 兜底）");
 {
-  const { applyDebugLogLinkage } = await import("./lib/api.mjs");
+  const { applyDebugLogLinkage } = await import("../lib/api.mjs");
   // true → 补 info
   const s1 = { distillDebugLog: true };
   applyDebugLogLinkage(s1);

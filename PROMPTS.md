@@ -2,12 +2,13 @@
 
 > **说明文档，非真源。** 本插件所有提示词的真源在 `src/`：
 > - 系统提示词注入：`src/index.mjs`（`text()` 闭包）
+> - 记忆投影（非提示词，但决定模型可见内容）：`src/projection.mjs`
 > - 摘要 / 蒸馏 / 关键词：`src/common/prompts.mjs`
 > - hybrid 模式提示词：`src/hybrid/prompts.mjs`（`HYBRID_PROACTIVE` / `SUBAGENT_SYSTEM`）
 > - 失败重试：`src/common/retry.mjs`
 >
 > 改提示词请改源码，**本文件仅作人工可读索引与维护参照**，需与源码同步更新。
-> 适用版本：v1.6.0-alpha.1。
+> 适用版本：见 package.json。
 
 ---
 
@@ -16,6 +17,8 @@
 | 用途 | 名称 | 真源位置 | 注入 / 调用时机 |
 |---|---|---|---|
 | 系统提示词注入 | 记忆公民指令 / 记忆自动维护说明 / 混合模式分工说明 | `src/index.mjs` `text()` | 每轮 system prompt 拼接注入 |
+| 今日日志块 | `# 今日工作日志 (...)` | `src/index.mjs` `text()` | 每轮 system prompt 拼接注入（唯一随 section 注入的记忆内容） |
+| **记忆正文投影** | **用户级/项目级 MEMORY.md** | **`src/projection.mjs`** | **每 step 经 `agent/pre-step` 注入为常驻 user 消息（不在 section 内）** |
 | 路径简写硬约束 | `antiMangle` | `src/index.mjs` | 随 system prompt 注入（始终） |
 | plan 模式禁写提示 | `planNote` | `src/index.mjs` | 仅 plan 模式激活时追加 |
 | 触发闸门关键词 | `SCENE_KEYWORDS` | `src/common/prompts.mjs` | 结算闸门判定（纯文本轮次触发写） |
@@ -28,7 +31,9 @@
 
 ## 二、系统提示词注入（记忆公民指令 / 记忆说明）
 
-真源：`src/index.mjs` 的 `systemPrompt.section.text()` 闭包。返回内容由「基础说明 + 路径简写 + 模式分支指令 + plan 提示」拼接。
+真源：`src/index.mjs` 的 `systemPrompt.section.text()` 闭包。返回内容由「基础说明 + 路径简写 + 模式分支指令 + plan 提示 + 今日日志块」拼接。
+
+> **section 不含记忆正文。** 用户级/项目级 `MEMORY.md` 经 E 投影（`src/projection.mjs`）注入为常驻 user 消息（每个 step 可见），见 §2.5。section 只含「常量指令（intro）+ 今日工作日志」。分流依据是变化频率：MEMORY.md 低频 durable → 投影；今日日志高频易变 → 留 section 每步注入（不进历史以免膨胀）。
 
 ### 2.1 基础说明（两种形态，按是否桥接 buddy 目录切换）
 - **已桥接**（`paths.buddyDirs().length > 0`）：告知 agent 当前项目存在 WorkBuddy/CodeBuddy 记忆目录，本插件直接读写这些目录，不再单独创建 `.deepseek-harness/memory/`。
@@ -38,7 +43,7 @@
 ### 2.2 路径简写硬约束 `antiMangle`
 > 提及记忆文件路径时一律用 `~` 简写（如 `~/.deepseek-harness/MEMORY.md`），不要逐字拼写绝对路径——你转述绝对路径容易漏掉目录分隔符。
 
-真机踩坑：AI 转述绝对路径曾出现缺分隔符（如 `~/.deepseek-harness` 被拼成 `~.deepseek-harness`），故强制喂 `~` 简写。
+真机踩坑：AI 转述绝对路径易出现缺分隔符（如 `~/.deepseek-harness` 被拼成 `~.deepseek-harness`），故强制喂 `~` 简写。
 
 ### 2.3 模式分支指令 `proactive`（按 `memoryMode` 切换）
 | 模式 | 注入文案 | 意图 |
@@ -51,6 +56,16 @@
 
 ### 2.4 plan 模式禁写提示 `planNote`
 仅 `state.planModeActive` 时追加：「当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取用 memory_read）。」属于软提示，网关物理兜底仍生效。
+
+### 2.5 记忆正文投影（非 prompt，但决定模型可见内容）
+
+真源：`src/projection.mjs`。用户级与项目级 `MEMORY.md` 经 `agent/pre-step` 投影为**两条独立的常驻 user 消息**：
+
+- **内容形态**：`# 用户级记忆 (<~ 简写路径>)\n<正文>` / `# 项目级记忆 (<~ 简写路径>)\n<正文>`；正文经 `budgetClip` 按 `userBudgetChars` / `workspaceBudgetChars` 截断，并剥 `[smart]` 标签与删除线墓碑。
+- **source 标注**：`{ kind: 'plugin', plugin: 'dsh-memory-palace', form: 'instructions' }`（`form` 必须是宿主 `ContextForm` 联合内的合法值）。
+- **拆两条消息**的原因：否则「项目记忆一改，用户记忆连带重发」。
+- **去重与重注**：内容不变只写一次；上下文压缩把消息移出 surface 后，后续 step 自动重注。
+- **指令优先级说明**：投影是 user 角色，强约束建议放 harness 的 `AGENTS.md`（system 优先级），`MEMORY.md` 只放动态事实。
 
 ---
 
@@ -68,7 +83,7 @@ export const SCENE_KEYWORDS = ["记住", "记一下", "remind", "偏好", "决�
 
 ## 四、智能模式摘要 Prompt `SUMMARY_PROMPT`
 
-真源：`src/common/prompts.mjs`。**v1.4.0 起为函数**，支持回喂存量记忆。
+真源：`src/common/prompts.mjs`。函数式，支持回喂存量记忆。
 
 ### 4.1 用途与触发
 智能模式（`memoryMode === "smart"`）每轮结束 `summarizeTurn` 调用，让 LLM 把「新产生的对话」提炼为结构化摘要 + 跨 session durable 事实 + 可选记忆增量维护。
@@ -79,7 +94,7 @@ SUMMARY_PROMPT({ allowDelete = false, outputBudget } = {})
 ```
 - `allowDelete = true`：**手动蒸馏按钮**场景，开放 `add` / `replace` / `delete` 三类记忆维护指令。
 - `allowDelete = false`：**自动智能模式**场景，仅开放 `add` / `replace`，**禁止 delete**（避免误删记忆）。
-- `outputBudget`（v1.4.1 新增）：最终输出软预算 token 数（取自 `summaryMaxTokens`，默认 2000）。注入 prompt 的【输出长度约束】：最终 JSON 控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；**思考/推理不受限**，但成稿须精炼不超预算。该值仅作为 prompt 软约束，**不**传给 harness API、更不乘倍——API 层已不传 `maxTokens`，思考+输出合计靠模型自身原生帽兜底。
+- `outputBudget`：最终输出软预算 token 数（取自 `summaryMaxTokens`，默认 2000）。注入 prompt 的【输出长度约束】：最终 JSON 控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；**思考/推理不受限**，但成稿须精炼不超预算。该值仅作为 prompt 软约束，**不**传给 harness API、更不乘倍——API 层已不传 `maxTokens`，思考+输出合计靠模型自身原生帽兜底。
 
 > 注意：回喂是否实际发生由 `distill.mjs` 按 `cfg().feedbackEnabled` 决定（智能模式级，自动/手动均生效）；本 prompt 仅声明能力边界——`allowDelete` 决定 prompt 是否允许 delete 指令。
 
@@ -98,14 +113,14 @@ SUMMARY_PROMPT({ allowDelete = false, outputBudget } = {})
 - `durable` 最多 3 条；`scope`：`project`=项目约定/决策，`user`=跨项目个人偏好。闲聊/一次性/错误现象不提炼。
 - `memoryOps` 的 `replace`/`delete` 必须带 `oldText` 精确匹配（匹配失败被拒、不改任何内容）；结构行（`#` / `<!--`）受保护，禁删。
 
-### 4.4 输出风格硬约束（v1.4.0 防污染）
+### 4.4 输出风格硬约束（防污染）
 - summary 必须**客观、第三人称、陈述性**；**严禁**提问/提议/请示/寒暄/自我指涉/内心独白/对话体——在写记忆，不在对话。
 - durable 每条必须**可独立成立的客观事实**；严禁把「助手说过的话/未确认提议」当事实。
 - 仅含未决提问无结论 → summary 写「本次对话为未决讨论，暂无确定结论」，durable 留空，绝不照抄对话体。
 
 ---
 
-## 四·五、混合模式提示词（v1.6.0 新增）
+## 四·五、混合模式提示词
 
 真源：`src/hybrid/prompts.mjs`。
 
@@ -122,33 +137,42 @@ hybrid 模式下注入 system prompt 的「段二」，替代 smart 的「无需
 hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.mjs`），子代理执行「判定 + 产出一体」：
 - **判定**：本轮是否有实质内容（完成任务/修 bug/决策/结论/用户偏好）。无重点 → 纯文本收尾（1 次调用，仍推进断点）；有重点 → 工具循环写入日志（2-5 次调用）。
 - **工具白名单**（仅循环内，非 DSH 全局）：
-  - `log_read_section(sections[])`：**一次读取多个章节**（合并返回，未找到的章节注明）——日志回喂超 `subagentLogBudget` 仅给章节目录时按需拉取；prompt 强制要求多章节在单次调用中传齐，避免多轮往返（v1.6.0 A+C 改进）；
+  - `log_read_section(sections[])`：**一次读取多个章节**（合并返回，未找到的章节注明）——日志回喂超 `subagentLogBudget` 仅给章节目录时按需拉取；prompt 强制要求多章节在单次调用中传齐，避免多轮往返；
   - `log_write_ops(ops[])`：批量提交 `{op:"new_section"|"append"|"mark_delete", section, entry?, oldText?}`。
 - **日志 ops 规则**（prompt 明文）：
   - 只能通过 `log_write_ops` 写，禁止重写整文件；三种 op：新增章节 / 章节内追加（upsert，不强行匹配现有章节）/ 标记删除（删除线墓碑，非物理删除）；
   - 去重是子代理职责：回喂日志中已存在的结论禁止重复追加，语义重复/矛盾用 `mark_delete` 标记过时条目；
   - 条目格式：一行一条、结论开头 + 关键细节、客观第三人称、禁止标签与对话体。
-- **失败语义**（v1.6.0 定案）：超 6 轮 / 超时 `summaryTimeoutMs` / 模型不支持 tools → **本轮放弃、不降级 `writeLightEntry`**（无格式原文会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。
+- **格式规范段（7 正 + 3 反）**——旧产物是「一堵墙」（单章节 + 零嵌套 + 零加粗 + 200 字长句），故把格式细则写进 prompt：
+  - 正面：①文件头由插件维护、子代理不写；②一主题一 `##` 章节、同主题超 3 条再拆 `###`；③一条一事实 ≤120 字，超长拆父项 + 两空格缩进子项（**缩进必须模型自己写**，`upsertSectionText` 只原样保留中间换行与缩进）；④关键结论/决策/纠错 `**加粗**`、重要约束标 `（重要）`；⑤行内分组 `**结论**：` / `**待办**：` / `**约束**：` / `**产出**：` / `**用户约定**：`；⑥允许一句「用户意图/反馈」作语境，禁止流水账；⑦可复现命令/脚本用代码块。
+  - 反模式：过程流水（"用户提出…我已改…"）、自我过程表述（"我搜索了 A/B/C"）、把多个结论塞进 200 字长句。
+- **失败语义**：超 6 轮 / 超时 `summaryTimeoutMs` / 模型不支持 tools → **本轮放弃、不降级 `writeLightEntry`**（无格式原文会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。
+- **环境边界段**：本环境不是代码执行环境，`run_code` 等工具均不存在；子代理只能调用 `log_write_ops` / `log_read_section`，不得模仿上文出现过的任何工具调用。
+- **输入去噪**（非 prompt 但影响子代理可见内容）：`projectTurnMessages` 按 `source.kind` 排除注入类消息（`agent-instructions` / `plugin` / `skill-catalog` 等），只喂真实用户对话 + assistant/tool 消息。实测单轮输入 6967 → 3849 字符（−44.8%）。
 
 ### 4.5.3 注入侧删除线过滤
 
-v1.6.0 起注入 system prompt 前用 `stripDeletedLines`（`src/common/text.mjs`）剔除**整行**删除线墓碑（`~~...~~`，可带 `- ` 列表符）——文件保留墓碑供审计，注入侧过滤防模型把已作废条目当现行有效；行内局部删除线（`- 旧名 ~~原名~~`）不滤。
+注入 system prompt 前用 `stripDeletedLines`（`src/common/text.mjs`）剔除**整行**删除线墓碑（`~~...~~`，可带 `- ` 列表符）——文件保留墓碑供审计，注入侧过滤防模型把已作废条目当现行有效；行内局部删除线（`- 旧名 ~~原名~~`）不滤。
+
+### 4.5.4 日志文件头规范
+
+子代理**不写文件头**（prompt 明文），由 `ensureLogHeader`（`src/common/sections.mjs`）在 `applyLogOps` 落盘前补齐 `# YYYY-MM-DD`：空文件写入标题；首行空或直接以 `##` 开头则补标题；已有同日标题原样返回（幂等）。仅在写入时补齐，历史文件不回填。
 
 ---
 
 ## 五、项目记忆蒸馏 Prompt `DISTILL_PROMPT`
 
-真源：`src/common/prompts.mjs`。固化自 `upgrade plan/v1.2.0/记忆蒸馏Prompt.md`。
+真源：`src/common/prompts.mjs`。
 
 ### 5.1 用途与触发
 手动「蒸馏项目记忆」按钮调用：system = 本 prompt（函数式，注入 `outputBudget`），user = 项目 `MEMORY.md` 全文，输出 = 精炼后的项目记忆，**直接覆盖写回**（手动蒸馏开放 delete，`allowDelete:true`）。
 
-> **v1.4.1 起为函数**：`DISTILL_PROMPT({ outputBudget } = {})`。`outputBudget` 取自 `projectMaxTokens`（默认 8000），注入【输出长度约束】：提炼后的项目记忆控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；思考不受限，成稿须精炼不超预算。该值仅 prompt 软约束，**不**传给 API（API 层不传 maxTokens，靠模型原生帽兜底）。
+`DISTILL_PROMPT({ outputBudget } = {})`。`outputBudget` 取自 `projectMaxTokens`（默认 8000），注入【输出长度约束】：提炼后的项目记忆控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；思考不受限，成稿须精炼不超预算。该值仅 prompt 软约束，**不**传给 API（API 层不传 maxTokens，靠模型原生帽兜底）。
 
 ### 5.2 提炼总原则
 只留「以后还会用到」，删「一次性过程」；判断标准：删了这条下次开会会不会出错/返工/重踩坑？会→留，不会→删。
 
-### 5.3 常见归档维度（v1.4.1 起：参考，非强制；可按材料实际内容增删维度）
+### 5.3 常见归档维度（参考，非强制；可按材料实际内容增删维度）
 1. 定位 —— 任务本质 + 最终产出
 2. 当前状态 —— 推进到哪、卡哪、下一步
 3. 核心约束 —— 绝对不能变（丢了会出事才叫约束）
@@ -166,6 +190,7 @@ v1.6.0 起注入 system prompt 前用 `stripDeletedLines`（`src/common/text.mjs
 
 ## 六、文档维护说明
 
-- 本文件只收录**提示词与提示词常量**（系统提示词注入 / 闸门关键词 / 摘要 prompt / 蒸馏 prompt）。
+- 本文件只收录**提示词与提示词常量**（系统提示词注入 / 闸门关键词 / 摘要 prompt / 蒸馏 prompt），另收录「记忆正文投影」与「日志文件头规范」——它们不是提示词，但直接决定模型可见内容，故在此登记。
 - **智能模式蒸馏失败重试**属蒸馏行为机制，非提示词，说明在 `DEVELOPMENT.md`「智能模式蒸馏 —— 失败重试」（真源 `src/common/retry.mjs`）。
-- 改提示词请改源码（`src/index.mjs` 系统提示词闭包 / `src/common/prompts.mjs`），本文件同步更新。
+- **投影通道的契约风险与降级**见 `DEVELOPMENT.md`「记忆注入通道」§7.4。
+- 改提示词请改源码（`src/index.mjs` 系统提示词闭包 / `src/common/prompts.mjs` / `src/hybrid/prompts.mjs`），本文件同步更新。

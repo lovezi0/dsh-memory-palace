@@ -6,18 +6,18 @@
 
 ## 特性
 
-- **人类可读的真源**：记忆全部存储在 Markdown 文件中（`MEMORY.md` + 每日日志 `YYYY-MM-DD.md`），任何编辑器可直接修改，数据永远属于你。
-- **双层记忆**：用户级（跨项目个人偏好，默认 `~/.deepseek-harness/MEMORY.md`）+ 工作区级（项目约定，默认 `<cwd>/.deepseek-harness/memory/`）。
-- **日志迁移**：超过保留天数（默认 30 天）的每日日志自动迁移进 `MEMORY.md` 后删除，长期记忆持续沉淀。
-- **WorkBuddy / CodeBuddy 桥接**：项目已存在 `.workbuddy/memory` 或 `.codebuddy/memory` 时直接读写这些目录，无需重复维护记忆。
-- **记忆工具**：`memory_note`（项目级写入）、`memory_note_user`（用户级写入）、`memory_read`（聚合读取）、`memory_delete`（按内容删除，两阶段确认），全部内置去重，防止重复追加。
-- **会话标题栏「记忆」按钮**：支持手动蒸馏：①蒸馏会话 / ②蒸馏项目记忆。
-- **设置页集成**：DSH 设置中内置「记忆」面板（中英双语），所有配置均可图形化调整，无需改配置文件。
-- **主动记忆（主路径，插件模式）**：注入「记忆公民指令」引导 agent 在「修复 bug/根因+绕过」「验证 build/test 通过」「完成里程碑/关键决策」「用户表达偏好/约束」时主动调 `memory_note` / `memory_note_user` 落档 — 对标 WorkBuddy 的"智能记一笔"手感。
-- **智能模式（LLM 智能会话摘要）**：智能模式下，每轮命中防闲聊闸门后由 harness 把本会话**新增对话增量**（按 session 事件 seq 断点）提炼成摘要——`summary` 写每日日志 + durable 事实写 MEMORY.md。
-- **记忆注入**：记忆块仅在会话**首次**构建时注入（DSH 会话自身继承历史轮次，逐轮注入冗余且有过时断言干扰）；发生上下文压缩（compaction）后自动重注。
-- **混合模式（子Agent+主Agent混合处理 🔥推荐）**：记忆子代理在每轮 turn/end 自动把本轮摘要写入**今日工作日志**（章节化组织、回喂今日日志做增量去重、重复/过时条目标删除线墓碑）；MEMORY.md 写入权归还 agent（`memory_write` 章节化追加 / `memory_update_section` 整章节精确替换 / 双门禁内 `memory_reorganize` 全量重整）。
-- **标准 npm 插件包**：经 `dsh plugin` 一键装入 profile，`cordis.patch.yml` 声明 bundle patch，零手动改动 harness。
+- **人类可读的真源**：记忆以纯 Markdown 存储，任何编辑器都能直接修改，数据始终属于你。
+- **双层记忆**：用户级（跨项目个人偏好）+ 工作区级（项目约定），互不干扰。
+- **日志自动沉淀**：超过保留期的每日日志自动并入长期记忆，结论不丢。
+- **WorkBuddy / CodeBuddy 桥接**：项目已有对应记忆目录时直接读写，无需重复维护。
+- **记忆工具**：AI 可主动写入、聚合读取、按内容删除（删除需人工确认），写入自带去重。
+- **手动蒸馏**：会话标题栏一键把当前对话或项目记忆提炼成长期记忆。
+- **设置页集成**：全部配置均可在 DSH 设置面板中图形化调整，无需改配置文件。
+- **主动记忆（插件模式）**：以指令引导 AI 在完成任务、修复问题、确定决策、获知偏好时主动落档。
+- **智能模式**：由模型自动提炼每轮新增内容，摘要进日志、长期事实进记忆。
+- **记忆注入**：长期记忆全程常驻、每个步骤都可见；今日日志按轮次注入，避免上下文膨胀。
+- **混合模式（🔥推荐）**：子代理每轮自动整理日志并去重，长期记忆由主 AI 主动维护，兼顾自动化与可控性。
+- **标准插件包**：经官方插件机制一键安装，无需改动 harness。
 
 ## 记忆文件布局
 
@@ -26,11 +26,11 @@
 └── MEMORY.md                      # 用户级记忆（跨项目个人偏好）
 
 <项目根>/
-├── .workbuddy/memory/             # 桥接 WorkBuddy 记忆（已存在时，按序优先）
+├── .workbuddy/memory/             # 桥接 WorkBuddy 记忆（存在时优先写入）
 │   ├── MEMORY.md                  # 项目级约定（buddy 目录保持嵌套，兼容 WB/CB 原生格式）
 │   └── 2026-08-16.md              # 每日工作日志
-├── .codebuddy/memory/             # 桥接 CodeBuddy 记忆（已存在时，结构同 .workbuddy）
-└── .deepseek-harness/             # 回退目录（无 buddy 目录时自动创建）
+├── .codebuddy/memory/             # 桥接 CodeBuddy 记忆（存在时，结构同 .workbuddy）
+└── .deepseek-harness/             # dsh 原生目录（读取恒在首位；无 buddy 时作为写入目标创建）
     ├── MEMORY.md                  # 项目级约定（长期记忆，与 memory/ 同级）
     └── memory/
         └── 2026-08-16.md          # 每日工作日志
@@ -38,25 +38,24 @@
 
 ## 工作原理
 
-**读取（每轮对话）**——`systemPrompt.section` 同步读盘，把以下内容拼进系统提示词：
+**读取（每轮对话）**——两条通道并行：
 
 ```
-用户级 MEMORY.md
-+ 工作区 MEMORY.md
-+ 今日日志 YYYY-MM-DD.md
-→ 注入 system prompt，让 AI 跨会话保持一致
+① 长期记忆：全程常驻，每个步骤都可见；内容未变只写一次，压缩后自动重注
+② 今日日志：随系统提示词按轮次注入（高频变化，不进对话历史以免膨胀）
 ```
 
-**写入（每轮结束）**——监听 `session/event` 的 `turn/end`，经「防闲聊闸门」判定后异步追加：
+**写入（每轮结束）**——经「防闲聊闸门」判定后异步追加：
 
 ```
-turn/end ──► 轻量兜底闸门
-         │     有工具调用 / 有错误 / agent 主动记 / 命中偏好·决策关键词 → 放行
-         │     否则：跳过（不写、不调 LLM）
-         ├─► 轻量条目写入 YYYY-MM-DD.md（全部目标目录；可关）
-         ├─► 若本轮出错且开启「对话出错自动记录」→ 「错误现象」写入对应 MEMORY.md
-         └─► prune：超过 dailyLogRetentionDays 的日志蒸馏进 MEMORY.md 后删除
+本轮结束 ──► 闸门：有工具调用 / 有错误 / AI 主动记 / 命中偏好·决策关键词 → 放行
+         │      否则跳过（不写、不调模型）
+         ├─► 摘要写入今日日志
+         ├─► 出错且开启「自动记录错误」→ 错误现象写入长期记忆
+         └─► 超期日志并入长期记忆后删除
 ```
+
+日志文件头统一为日期标题，写入时自动补齐（历史文件不回填）。
 
 **工具**——AI 在对话中按需调用：
 
@@ -78,7 +77,7 @@ turn/end ──► 轻量兜底闸门
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.6.3
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.7.0
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -119,6 +118,12 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.7.0**
+    - **1.7.0.alpha.1**
+        - 🔥新增独立通道注入记忆文件
+        - 🐛修复存在多种记忆路径时读取冲突的问题
+        - 💪优化记忆子 agent 投影消息节省 token
+        - 💪优化 SUBAGENT_SYSTEM 记忆输出格式
 - **1.6.3**
     - npm publish
     - **1.6.3.alpha.4**

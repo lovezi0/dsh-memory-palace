@@ -2,7 +2,7 @@
 // durable [smart] 事实必须写到会话工作区的【同级】MEMORY.md，而非旧嵌套 memory/MEMORY.md。
 // 运行：/usr/bin/env -u NODE_OPTIONS node verify-distill-route.mjs
 import { Context } from "@deepseek-ai/cordis";
-import { name, apply, Config, inject } from "./lib/index.js";
+import { name, apply, Config, inject } from "../lib/index.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

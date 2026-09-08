@@ -2,11 +2,11 @@
 // 桥接 / 去重 / 用户级 / 聚合读取。
 // 运行（Windows 静默环境）：/usr/bin/env -u NODE_OPTIONS node test-load.mjs
 import { Context } from "@deepseek-ai/cordis";
-import { name, apply, Config, inject } from "./lib/index.js";
-import { createPaths } from "./lib/common/paths.mjs";
-import { createRecords, readNumberedMemory, applyMemoryOp } from "./lib/common/records.mjs";
-import { createDistill } from "./lib/distill.mjs";
-import { classifyFailure, backoffDelayMs, runWithRetry, RETRY_CONSTANTS } from "./lib/common/retry.mjs";
+import { name, apply, Config, inject } from "../lib/index.js";
+import { createPaths } from "../lib/common/paths.mjs";
+import { createRecords, readNumberedMemory, applyMemoryOp } from "../lib/common/records.mjs";
+import { createDistill } from "../lib/distill.mjs";
+import { classifyFailure, backoffDelayMs, runWithRetry, RETRY_CONSTANTS } from "../lib/common/retry.mjs";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
@@ -1062,7 +1062,7 @@ console.log("[R6] readNumberedMemory / applyMemoryOp unit");
 // ---------- 场景 F：回喂存量记忆（v1.4.0 特性3 集成） ----------
 console.log("[F] FEEDBACK existing memory into distill");
 {
-  const { createPaths: cp } = await import("./lib/common/paths.mjs");
+  const { createPaths: cp } = await import("../lib/common/paths.mjs");
   function buildDistill(overrides, llmOpts) {
     const cfg = { ...BASE, ...overrides };
     const ctx = new Context();

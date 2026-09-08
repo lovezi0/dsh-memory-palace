@@ -6,7 +6,7 @@
 > 官方 `compaction-basic`（`inject:['llm','sessions']` + `requestHeader()?.config` + `ctx.llm.stream()`）即同款模式。
 
 > 本文记录 dsh-memory-palace 曾尝试、后经真机验证不可行的「插件侧 LLM 自动摘要」方案，
-> 以及放弃它的原因与替代方案。完整决策背景与调查过程见 `plans/v0.7.0.md`「方案修订」章节。
+> 以及放弃它的原因与替代方案。
 
 早期版本（v0.7.0 草案）曾尝试在每轮结束（`turn/end`）后由插件自行调用 `ctx.llm.stream()` 生成对话摘要写入每日日志。真机测试连续暴露 4 个契约/时机问题，深度调查后确认该模式不可行，**v0.7.1 起已废弃**，改为「记忆公民 prompt 主动记忆」主路径。
 
