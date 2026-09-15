@@ -1,0 +1,21 @@
+name: sync-to-cnb
+on:
+  push:
+    branches: ["*"]
+    tags: ["*"]
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - run: |
+          git config --global user.email "bot@cnb.local"
+          git config --global user.name "cnb-sync"
+          REMOTE="https://cnb:${{ secrets.CNB_TOKEN }}@cnb.cool/txpoi/lovezi0/dsh-memory-palace.git"
+          git remote add cnb "$REMOTE" || git remote set-url cnb "$REMOTE"
+          git push cnb --all
+          git push cnb --tags
