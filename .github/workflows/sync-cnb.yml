@@ -12,10 +12,17 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-      - run: |
+      - name: Mirror all refs to CNB
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: |
           git config --global user.email "bot@cnb.local"
           git config --global user.name "cnb-sync"
-          REMOTE="https://cnb:${{ secrets.CNB_TOKEN }}@cnb.cool/txpoi/lovezi0/dsh-memory-palace.git"
+          REMOTE="https://cnb:${CNB_TOKEN}@cnb.cool/txpoi/lovezi0/dsh-memory-palace.git"
           git remote add cnb "$REMOTE" || git remote set-url cnb "$REMOTE"
-          git push cnb --all
-          git push cnb --tags
+          # 确保本地拿到所有远程引用
+          git fetch origin --all --tags
+          git push cnb --mirror
+          # 有 LFS 再补
+          git lfs fetch --all origin
+          git lfs push --all "$REMOTE"
