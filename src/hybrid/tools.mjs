@@ -232,7 +232,7 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         "(workspaceBudgetChars); (2) at least reorgCooldownDays (default 7) since the last reorganize. " +
         "If either gate fails the call is REJECTED — use memory_update_section instead. " +
         "Requirements for newContent: keep the full `## 章节` + `- 条目` format; NEVER lose still-valid key " +
-        "information — read the daily logs (memory_read) and current MEMORY.md for cross-checking first; " +
+        "information — read the daily logs and current MEMORY.md for cross-checking first (memory_read with scope 'all'); " +
         "merge duplicates, drop only strikethrough/obsolete content; keep user-level MEMORY.md untouched " +
         "(user-level reorganization is FORBIDDEN). A last-reorg timestamp comment is appended automatically. " +
         "A user confirmation dialog is shown before execution.",

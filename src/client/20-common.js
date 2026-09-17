@@ -21,7 +21,8 @@
         projectMaxTokens: v.projectMaxTokens != null ? String(v.projectMaxTokens) : "8000",
         reorgCooldownDays: v.reorgCooldownDays != null ? String(v.reorgCooldownDays) : "7",
         subagentLogBudget: v.subagentLogBudget != null ? String(v.subagentLogBudget) : "20000",
-        feedbackEnabled: v.feedbackEnabled === false ? "false" : "true"
+        feedbackEnabled: v.feedbackEnabled === false ? "false" : "true",
+        customInstructions: v.customInstructions || ""
       };
     }
 

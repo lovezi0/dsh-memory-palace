@@ -29,6 +29,9 @@
       const [failed, setFailed] = react.useState(false);
       const [validation, setValidation] = react.useState(null);
       const [modelOptions, setModelOptions] = react.useState([]);
+      // v1.7.1（特性2）：折叠卡片的展开态（key → bool）。照抄宿主 ui-settings-plugins/PluginCard
+      // 的语义 —— 纯前端临时状态、**不持久化**：「用户打开哪张卡」是一次阅读手势，不是配置。
+      const [openCards, setOpenCards] = react.useState({});
 
       // 初始加载（从自有 route 读真实值）。
       react.useEffect(() => {
@@ -113,6 +116,8 @@
           // 保存成功后同步 remote（真实返回值），保留当前 draft（= 用户保存的目标值）。
           setRemote({ value: full.value, user: full.user, revision: full.revision, loaded: true });
           setDirty(false);
+          // 保存完成 = 这一轮编辑动作结束 → 收起全部卡片回到总览态（对齐宿主 PluginCard 行为）。
+          setOpenCards({});
         } catch (e) {
           setFailed(true);
         } finally {
@@ -202,18 +207,67 @@
         borderTop: "1px solid var(--dsw-alias-border-l2, #e5e7eb)"
       };
 
+      // ---- v1.7.1（特性2）：折叠卡片样式 —— 逐值照抄宿主 ui-settings-plugins 的 PluginCard.module.css ----
+      // 竖向「name 叠在 description 上」的卡片宿主无可复用组件（它导出的 DisclosureRow 是横向 24px
+      // 紧凑行，布局不同，宿主 README 亦明确区分二者），故手写；chevron 用 data URI 内联 SVG
+      // （本项目 client 只能 require("react")，不引宿主图标包）。
       const cardStyle = {
-        border: "1px solid var(--dsw-alias-border-l2, #e5e7eb)",
-        borderRadius: "12px",
-        padding: "14px 16px",
+        border: "0.5px solid var(--dsw-alias-border-l4, #e5e7eb)",
+        // ⚠️ 必须显式写 borderColor：展开/收起靠 React diff 增删 cardOpenStyle 的 borderColor。
+        // 若只依赖 shorthand 的颜色，open 态写入的 borderColor 被移除后，CSSOM 中 border-color
+        // 声明随之删除 → 回退 UA 初始值 currentColor（文字色，近黑）→ 收起后边框变黑（真机 bug）。
+        borderColor: "var(--dsw-alias-border-l4, #e5e7eb)",
+        borderRadius: "16px",
         marginBottom: "12px",
-        background: "var(--dsw-alias-bg-layer-2, #ffffff)"
+        background: "var(--dsw-alias-bg-layer-3, #fafafa)",
+        overflow: "hidden"
       };
-      const groupTitleStyle = {
-        margin: "0 0 4px",
-        fontSize: "13px",
-        fontWeight: "500",
+      const cardOpenStyle = {
+        ...cardStyle,
+        background: "var(--dsw-alias-bg-layer-2, #ffffff)",
+        borderColor: "var(--dsw-alias-label-dimmed, #c9ced6)"
+      };
+      const cardHeaderStyle = {
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        width: "100%",
+        padding: "14px 16px",
+        appearance: "none",
+        WebkitAppearance: "none",
+        border: "0",
+        background: "none",
+        font: "inherit",
+        textAlign: "left",
+        cursor: "pointer"
+      };
+      const cardHeadTextStyle = { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" };
+      const cardNameStyle = {
+        fontSize: "15px",
+        fontWeight: "600",
+        lineHeight: "1.4",
         color: "var(--dsw-alias-label-primary, #1f2329)"
+      };
+      const cardDescStyle = {
+        fontSize: "13px",
+        lineHeight: "1.5",
+        color: "var(--dsw-alias-label-tertiary, #8a919f)"
+      };
+      const cardBodyStyle = {
+        borderTop: "0.5px solid var(--dsw-alias-border-l2, #e5e7eb)",
+        margin: "0 16px",
+        paddingBottom: "8px"
+      };
+      const chevronStyle = {
+        flexShrink: 0,
+        width: "14px",
+        height: "14px",
+        backgroundImage:
+          "url(data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25L7 8.75L10.5 5.25' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E)",
+        backgroundRepeat: "no-repeat",
+        backgroundPosition: "center",
+        backgroundSize: "14px 14px",
+        transition: "transform .16s"
       };
       const sectionStyle = {
         maxWidth: "760px",
@@ -282,18 +336,45 @@
       const hintStyle = { color: "var(--dsw-alias-label-tertiary, #8a919f)", margin: 0, fontSize: "12px", lineHeight: "1.5" };
       const errStyle = { color: "var(--dsw-alias-label-error, #d54941)", margin: 0, fontSize: "12px", lineHeight: "1.5" };
 
+      const toggleCard = (key) => setOpenCards((o) => ({ ...o, [key]: !o[key] }));
+      // 折叠卡片：header 自身是 button（整行可点 + aria-expanded + aria-label），body 仅在展开时渲染。
+      const card = (key, title, desc, children) =>
+        h("div", { style: openCards[key] ? cardOpenStyle : cardStyle }, [
+          h("button", {
+            type: "button",
+            className: "mp-card-header",
+            "aria-expanded": openCards[key] ? "true" : "false",
+            "aria-label": `${t(openCards[key] ? "collapse" : "expand")}: ${title}`,
+            style: cardHeaderStyle,
+            onClick: () => toggleCard(key)
+          }, [
+            h("span", { style: cardHeadTextStyle }, [
+              h("span", { style: cardNameStyle }, title),
+              h("span", { style: cardDescStyle }, desc)
+            ]),
+            h("span", { style: openCards[key] ? { ...chevronStyle, transform: "rotate(180deg)" } : chevronStyle })
+          ]),
+          openCards[key] ? h("div", { className: "mp-card-body", style: cardBodyStyle }, children) : null
+        ]);
+
       const num = (field) => ({
         type: "text",
         inputMode: "numeric",
         value: draft[field],
         disabled,
-        style: { ...inputStyle, borderColor: validation === field ? "var(--dsw-alias-label-error, #d54941)" : undefined },
+        style: { ...inputStyle, borderColor: validation === field ? "var(--dsw-alias-label-error, #d54941)" : "var(--dsw-alias-border-l2, #e5e7eb)" },
         onChange: (e) => edit(field, e.target.value)
       });
 
       return h("div", { className: "memory-palace-settings", style: sectionStyle }, [
         // 强制覆盖宿主 Webview 全局样式对原生 checkbox 尺寸的覆盖（内联 style 可能不敌全局 CSS）。
-        h("style", null, ".memory-palace-settings input[type=checkbox]{width:18px!important;height:18px!important;margin:0;flex-shrink:0!important;cursor:pointer;}"),
+        h("style", null,
+          ".memory-palace-settings input[type=checkbox]{width:18px!important;height:18px!important;margin:0;flex-shrink:0!important;cursor:pointer;}" +
+          // v1.7.1（特性2）：展开区首条元素自带 borderTop（row/toggle 共用该样式），会与
+          // .mp-card-body 的 border-top 叠成双线 → 去掉首条的边框与上内边距。
+          ".memory-palace-settings .mp-card-body > *:first-child{border-top:0!important;padding-top:0!important;}" +
+          ".memory-palace-settings .mp-card-header:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4b5bff);outline-offset:-2px;border-radius:16px;}"
+        ),
         h("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" } }, [
           h("div", null, [
             h("h3", { style: headingStyle }, t("title")),
@@ -305,8 +386,7 @@
           ])
         ]),
         failed ? h("p", { style: errStyle }, t("saveFailed")) : null,
-        h("div", { style: cardStyle }, [
-          h("p", { style: groupTitleStyle }, t("core")),
+        card("core", t("core"), t("coreDesc"), [
           h("div", { style: toggleStyle }, [
             h("div", { style: { flexShrink: 1, minWidth: 0 } }, [
               h("p", { style: { ...labelStyle, margin: 0 } }, t("bridgeLabel")),
@@ -327,8 +407,27 @@
               placeholder: ".workbuddy/memory, .codebuddy/memory"
             }), "buddyWorkspaceMemoryDirs")
         ]),
-        h("div", { style: cardStyle }, [
-          h("p", { style: groupTitleStyle }, t("smartSummary")),
+        // v1.7.1（特性3）：自定义指令。非空时经 system prompt 追加到「记忆分工说明」之后；
+        // 它是恒定内容（用户配置一次不变），故放 section 而非 E 投影 —— 零缓存成本。
+        card("custom", t("custom"), t("customDesc"), [
+          row(t("customLabel"), t("customHint"),
+            h("textarea", {
+              value: draft.customInstructions,
+              disabled,
+              rows: 6,
+              placeholder: t("customPlaceholder"),
+              style: {
+                ...inputStyle,
+                height: "auto",
+                minHeight: "120px",
+                padding: "10px 12px",
+                lineHeight: "1.6",
+                resize: "vertical"
+              },
+              onChange: (e) => edit("customInstructions", e.target.value)
+            }), "customInstructions")
+        ]),
+        card("smartSummary", t("smartSummary"), t("smartSummaryDesc"), [
           // 轮次结束自动记录(summarize)：三种记忆模式的共用总闸门，始终显示，置于记忆模式之上、不随模式切换隐藏。
           toggle(t("summarizeLabel"), t("summarizeHint"), "summarize"),
           row(t("memoryModeLabel"),
@@ -378,16 +477,14 @@
             row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
           ])
         ]),
-        h("div", { style: cardStyle }, [
-          h("p", { style: groupTitleStyle }, t("storage")),
+        card("storage", t("storage"), t("storageDesc"), [
           row(t("userPathLabel"), t("userPathHint"), h("input", { ...num("userMemoryPath"), type: "text" }), "userMemoryPath"),
           row(t("wsDirLabel"), t("wsDirHint"), h("input", { ...num("workspaceMemoryDir"), type: "text" }), "workspaceMemoryDir"),
           row(t("retentionLabel"), draft.memoryMode === "hybrid" ? t("retentionHintHybrid") : t("retentionHint"), h("input", num("dailyLogRetentionDays")), "dailyLogRetentionDays"),
           row(t("userBudgetLabel"), t("userBudgetHint"), h("input", num("userBudgetChars")), "userBudgetChars"),
           row(t("wsBudgetLabel"), t("wsBudgetHint"), h("input", num("workspaceBudgetChars")), "workspaceBudgetChars")
         ]),
-        h("div", { style: cardStyle }, [
-          h("p", { style: groupTitleStyle }, t("dev")),
+        card("dev", t("dev"), t("devDesc"), [
           row(t("distillTimeoutLabel"), t("distillTimeoutHint"), h("input", num("summaryTimeoutMs")), "summaryTimeoutMs"),
           toggle(t("distillDebugLogLabel"), t("distillDebugLogHint"), "distillDebugLog")
         ])

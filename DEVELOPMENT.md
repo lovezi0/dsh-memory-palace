@@ -25,7 +25,7 @@ dsh-memory-palace/
 │       ├── 00-head.js         #   IIFE 头 + react / NS 初始化
 │       ├── 10-locales.js      #   zh/en 文案
 │       ├── 20-common.js       #   公共助手（fetch 封装等）
-│       ├── 30-settings-section.js  # 设置页「记忆」面板
+│       ├── 30-settings-section.js  # 设置页「记忆」面板（v1.7.1 起为折叠卡片 + 自定义指令板块）
 │       ├── 40-sparkle.js      #   SPARKLE_SVG 图标常量（内联 sparkle-twinkle.svg）
 │       ├── 50-distill-button.js   # 会话标题栏「记忆」按钮 + 下拉 + 自绘确认弹窗 + 浏览器通知
 │       └── 90-tail.js         #   apply 装配 + settings.section / header.utilities 插槽注册
@@ -33,9 +33,9 @@ dsh-memory-palace/
 │   └── build.mjs              # 构建：服务端递归复制 + index.js 入口重命名 + client 按序拼接（零外部依赖）
 ├── cordis.patch.yml           # bundle patch：向 profile 注入本插件配置
 ├── tests/                     # 测试脚本（node 直接运行，无测试框架依赖）
-│   ├── test-load.mjs          # 后端 cordis 单测（注入/轻量兜底/错误捕获/桥接/去重/删除/确认弹窗/重试/回喂等 167 项）
+│   ├── test-load.mjs          # 后端 cordis 单测（注入/轻量兜底/错误捕获/桥接/去重/删除/确认弹窗/重试/回喂等 179 项）
 │   ├── test-hybrid.mjs        # hybrid 单测（章节纯函数/子代理循环 mock/reorganize 门禁，20 项断言）
-│   ├── test-v1.7.0.mjs        # 投影/路径/去噪/日志头单测（34 项）
+│   ├── test-v1.7.0.mjs        # 投影身份判据/路径/去噪/日志头单测（39 项）
 │   ├── test-v1.4.1.mjs        # budgetClip / stripSmartTag 定向回归
 │   ├── test-client-smoke.mjs  # 前端 client bundle 冒烟测试
 │   └── verify-distill-route.mjs # 蒸馏 route 定向回归（activeCwd≠会话 cwd 时 durable 正确落同级 MEMORY.md）
@@ -62,6 +62,7 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 - **同步读取**：`systemPrompt.section` 的 `text()` 必须同步（harness 源码不 await），故读盘用 `readFileSync`；写盘走异步 `node:fs/promises`，不在同步热路径上。记忆正文投影（`src/projection.mjs`）同样走同步读盘。
 - **依赖约定**：`@deepseek-ai/*` 声明为 `peerDependencies`，运行时由 profile 的 `node_modules` 提供，本包不捆绑任何 harness 内部模块。
 - **不引入 `dsh-storage`**：其 JSON 落地与"记忆必须可读的 Markdown"这一核心价值冲突，刻意排除。
+- **设置页折叠卡片只能手写**：宿主 `ui-settings-plugins` 的 `PluginCard` 是「name 叠在 description 上」的竖向卡片；宿主导出的可复用组件 `DisclosureRow`（`ui-primitives`）是**横向 24px 紧凑行**，布局不同（宿主 README 亦明确区分二者）。且本包 client 只 `require("react")`（平台 seed 表），不引宿主图标包。故样式逐值照抄 `PluginCard.module.css`，chevron 用 data URI 内联 SVG。折叠态是 card-local 的纯前端 `useState`、**不持久化**（「用户打开哪张卡」是一次阅读手势），保存成功后自动收起。
 
 ## 混合模式（hybrid）要点
 
@@ -81,12 +82,24 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 
 ## 记忆注入通道
 
-记忆注入分两条通道，分流依据是**内容变化频率**（不是重要性）：
+记忆注入分两条通道，分流依据是**内容是否恒定**（v1.7.1 起）：
 
 | 内容 | 通道 | 理由 |
 |---|---|---|
-| 用户级 / 项目级 `MEMORY.md` | **E 投影**（`src/projection.mjs`）：`agent/pre-step` 投影为常驻 user 消息 | 低频、durable；常驻历史 → 每个 step 都可见 |
-| 记忆指令 intro + 今日日志 | **`systemPrompt.section`**：每步同步注入 | intro 是常量操作指令；日志高频易变，进历史会膨胀 |
+| **恒定指令**：记忆插件 intro + 记忆分工 prompt + 用户自定义指令 | **`systemPrompt.section`**：每步同步注入 | 内容恒定 → system prompt 不抖动 → **前缀缓存永久有效**（零成本） |
+| **易变内容**：用户级 / 项目级 `MEMORY.md`、今日工作日志 | **E 投影**（`src/projection.mjs`）：`agent/pre-step` 投影为常驻 user 消息 | 追加在历史尾部、按**文件身份**各只注一次 → 不触碰已有前缀 |
+
+自定义指令（`customInstructions`，v1.7.1 特性3）由用户在设置页「自定义指令」板块配置，拼接在**记忆分工 prompt 之后** ——
+拼接顺序即 system prompt 里的实际排布（同一 section 内完成，`order: 50` 不变）。留空或纯空白时不注入。
+它属恒定内容，故留在 section 而非走投影 —— 与「内容是否恒定」的分流依据一致。
+
+> ⚠️ **切勿把任何「每步可能变化」的内容放回 section** —— section 位于序列**最前**，一变就让其后整段前缀作废。
+> 实测（`testdata/session.v3.jsonl`，10 turn / 253 请求）：v1.7.0「日志走 section」形态下命中率仅 **94.53%**，
+> 9 次全量重算吃掉了 86.5% 的 miss token；日志迁出后预期 **≥ 99.5%**（除会话首个请求外无 cold）。
+
+投影的完整生命周期（会话首注入、内容变更不重注、compaction 后重注）见下图：
+
+![记忆投影生命周期（含 compaction 重注）](./assets/projection-lifecycle.svg)
 
 ### 7.1 E 投影三件套
 
@@ -105,9 +118,14 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 
 - source = `{ kind: 'plugin', plugin: 'dsh-memory-palace', form: 'instructions' }`。
   `form` 必须是宿主 `ContextForm` 联合内的值（该联合为判别类型，`form: 'memory'` 之类**类型不合法**）。
-- 去重两级：`isDeepStrictEqual` 比对 `content` + `source`（照抄 `sameContextPayload`），
-  ① 本步 `messages` / `decision.messages` 已含 → 跳过；② 扫 `session.surface.nodes` 经 `eventAt(seq)` 找同 payload 的 own message → 跳过。
-- 白送的两个特性：内容不变只写一次；compaction 把消息移出 surface 后，后续 step 找不到 → **自动重注**（故 `injectedSessionIds` 整套机制已删除）。
+- v1.7.1 去重判据 = **文件身份**（`sameProjectionIdentity`）：取消息**首行 heading** 作身份
+  （形如 `# 项目级记忆 (<path>)` / `# 今日工作日志 (<date> @ <dir>)`），且要求双方 `source` 均属本插件
+  （`isOwnProjection`，规避真实用户消息与宿主注入消息因首行巧合而误撞）。**只比身份、不比正文**。
+- 去重三级：① 本步 `messages` 已含同身份 → 跳过；② `decision.messages` 已含同身份 → 跳过；
+  ③ 扫 `session.surface.nodes` 经 `eventAt(seq)` 找同身份的 own message → 跳过。
+- 由此得到的性质：**同一文件只注一次**，内容再变也不重注（记忆正文由 agent 自己写入，其内容本就在
+  上下文里，重注纯属冗余）；换文件（跨日期日志）才视为新身份；compaction 把消息移出 surface 后判为缺失 →
+  **自动重注磁盘最新版**，顺带完成一次「刷新到最新」（故无需 `injectedSessionIds` 之类标记机制）。
 
 ### 7.3 连带修复：turnBuffer 采集过滤
 

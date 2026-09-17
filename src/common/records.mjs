@@ -3,7 +3,7 @@
 import { mkdir, readdir, unlink, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { todayISO, expandHome, readMdSync, toHomeShort, normLine, isStructural, stripSmartTag } from "./text.mjs";
+import { todayISO, expandHome, normLine, isStructural, stripSmartTag } from "./text.mjs";
 
 // 追加一行记忆，若目标文件已包含相同内容则跳过（去重），返回是否实际写入。
 export async function appendLineDedup(file, line) {
@@ -237,30 +237,6 @@ export function createRecords({ getConfig, paths }) {
     }
   }
 
-  // 读取目录里最近的（非今日）每日日志，拼成一段供 memory_read 展示（最多 3 份）。
-  async function recentLogs(dir) {
-    let files = [];
-    try {
-      files = await readdir(dir);
-    } catch {
-      return "";
-    }
-    const today = todayISO();
-    const dated = files
-      .map((f) => /^(\d{4}-\d{2}-\d{2})\.md$/.exec(f))
-      .filter((m) => m && m[1] < today)
-      .map((m) => m[1])
-      .sort()
-      .reverse()
-      .slice(0, 3);
-    const parts = [];
-    for (const date of dated) {
-      const text = readMdSync(join(dir, `${date}.md`));
-      if (text) parts.push(`# 日志 ${date} @ ${toHomeShort(dir)}\n${text.slice(0, cfg().workspaceBudgetChars)}`);
-    }
-    return parts.join("\n\n");
-  }
-
   // 轻量结构化条目（无 LLM）：截断原始文本，错误带 [ERROR] 前缀。
   async function writeLightEntry(dirs, turn, isError) {
     const userText = turn.find((b) => b.role === "user")?.text ?? "";
@@ -289,5 +265,7 @@ export function createRecords({ getConfig, paths }) {
     }
   }
 
-  return { appendDaily, prune, recentLogs, writeLightEntry, captureError };
+  // v1.7.1：recentLogs 已删除 —— memory_read 的 scope='daily' 改为按日期（isoDaysAgo）直读，
+  // 不再需要"最近 N 份文件"语义（跨日跳空会取偏）。
+  return { appendDaily, prune, writeLightEntry, captureError };
 }

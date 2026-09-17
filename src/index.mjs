@@ -22,11 +22,10 @@
 // - src/index.mjs：最薄入口——apply() 装配 + 闭包运行时（session/event 跟踪、settle 时序、section 注入）
 // - src/client/（00-head…90-tail）：浏览器 bundle 源码（build 时零依赖拼接为 lib/client.js 单文件，
 //   硬约束——dsh 客户端模块系统不支持插件相对 require）
-import { join } from "node:path";
 import Schema from "@deepseek-ai/schemastery";
 // v1.6.0-rc1：适配 DSH 0.1.2-alpha.2——dsh-settings 不再导出自由函数 installSettingsSection /
 // settingsNamespace，设置节注册改用 SettingsProvider 实例方法 installSection（经 ctx.inject(["settings"])）。
-import { todayISO, toHomeShort, readMdSync, budgetClip, stripSmartTag, stripDeletedLines, extractText, extractToolErrorText } from "./common/text.mjs";
+import { extractText, extractToolErrorText } from "./common/text.mjs";
 import { SCENE_KEYWORDS } from "./common/prompts.mjs";
 import { createPaths } from "./common/paths.mjs";
 import { createRecords } from "./common/records.mjs";
@@ -61,7 +60,7 @@ export const Config = Schema.object({
   summaryTimeoutMs: Schema.number().default(60000).description("蒸馏 LLM 调用的超时（毫秒），超时视为失败并降级；覆盖智能模式摘要与手动蒸馏两条链路；默认 60000（60s）。"),
   distillDebugLog: Schema.boolean().default(false).description("调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。distillLogLevel=info 时仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；distillLogLevel=debug 会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。"),
   // ---- v1.4.1：蒸馏 stderr 日志级别（平铺键，不进 UI；默认 info；distillDebugLog=true 时生效） ----
-  distillLogLevel: Schema.string().default("info").description("蒸馏 stderr 日志级别：info=仅元数据诊断（默认，不打印 LLM 原始响应）；debug=额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。无需 UI 配置，经 profile/settings.yaml 设置 distillLogLevel 键。"),
+  distillLogLevel: Schema.string().default("info").description("蒸馏 stderr 日志级别：info=仅元数据诊断（默认，不打印 LLM 原始响应）；debug=额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。无需 UI 配置，经 DSH home（$DSH_HOME）根目录的 settings.yaml 设置 distillLogLevel 键。"),
   // ---- v1.4.0：智能模式最终输出软预算（v1.4.1 起语义变更：prompt 软约束，思考不受限；实际硬上限由模型自身 maxTokens 决定） ----
   summaryMaxTokens: Schema.number().default(2000).description("会话摘要 LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 2000；可调大以容纳更多 durable 事实。"),
   projectMaxTokens: Schema.number().default(8000).description("手动「蒸馏项目记忆」LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 8000。"),
@@ -70,6 +69,9 @@ export const Config = Schema.object({
   // ---- v1.6.0：hybrid 模式配置（仅 memoryMode=hybrid 时生效） ----
   reorgCooldownDays: Schema.number().default(7).description("hybrid 模式：项目级 MEMORY.md 全量重整的冷却天数（距上次重整）。与「超出注入预算」双条件同时满足才允许 memory_reorganize；时间戳以 HTML 注释落在 MEMORY.md 文件尾。"),
   subagentLogBudget: Schema.number().default(20000).description("hybrid 模式：记忆子代理回喂今日工作日志的字符上限。超出时仅回喂章节目录，子代理用 log_read_section 按需读取章节。"),
+  // ---- v1.7.1（特性3）：自定义指令（用户自写，经 system prompt 注入到「记忆分工 prompt」之后） ----
+  // 放 system 而非 E 投影：用户配置一次即恒定 → 零缓存成本（见下方 section 的分流原则）。
+  customInstructions: Schema.string().default("").description("自定义指令：非空时追加到系统提示词「记忆分工说明」之后，用于承载不适合写进用户记忆的特殊指令。对全部会话与三种记忆模式生效；留空则不注入。"),
 });
 
 export const inject = ["systemPrompt", "tools", "llm", "webServer", "webRuntime"];
@@ -139,7 +141,7 @@ export function apply(ctx, config) {
   const paths = createPaths(() => source(), () => state.activeCwd);
   const records = createRecords({ getConfig: () => source(), paths });
   const distill = createDistill({ ctx, getConfig: () => source(), paths, records, state });
-  registerTools({ ctx, getConfig: () => source(), paths, records, state });
+  registerTools({ ctx, getConfig: () => source(), paths, state });
   registerApi({ ctx, paths, distill, state, getSettingsFace });
   // v1.6.0：hybrid 模式独立模块。必须【无条件注册】——apply() 同步段执行时 settings 服务
   // 尚未挂载（v1.6.0-rc1 起设置节经 SettingsProvider.installSection 在 ctx.inject(["settings"])
@@ -212,24 +214,18 @@ export function apply(ctx, config) {
   });
 
   // ---------- 读取：同步 section text（systemPrompt 要求同步） ----------
-  // v1.7.0：section 只保留「常量指令（intro）+ 今日工作日志」。
-  // 用户级 / 项目级 MEMORY.md 已移出 section，改由 E 投影（src/projection.mjs）承载为
-  // 常驻消息（每个 step 可见）。分流依据是「变化频率」：MEMORY.md 低频 durable → 投影；
-  // 今日日志高频易变 → 留 section 每步注入（不进历史以免膨胀）。
+  // v1.7.1：section **只保留恒定内容**（intro 指令 + 记忆分工说明 + planNote），
+  // 今日工作日志已迁入 E 投影（src/projection.mjs）。
+  // 分流依据是「内容是否恒定」：恒定 → 留 section（system prompt 在序列最前，内容恒定则
+  // 前缀缓存永久有效）；易变 → 走 E 投影追加到历史尾部，且按文件身份只注一次。
+  // ⚠️ 切勿把任何「每步可能变化」的内容放回本 section —— 变一次就会让其后整段前缀作废。
+  //    实测代价：9 次全量重算、命中率从 99.26% 掉到 94.53%（见 testdata/session.v3.jsonl）。
   ctx.systemPrompt.section({
     name: "memory-palace",
     order: 50,
     text: () => {
       const cfg = source();
       if (!cfg.enabled) return "";
-      const blocks = [];
-      // 今日工作日志：每 step 注入，预算 workspaceBudgetChars（与项目 MEMORY.md 同字段，
-      // 但各自独立 budgetClip 截断，互不挤占）。v1.4.1 的 budgetClip 已是"结构行 + 尾部最新"。
-      for (const dir of paths.readDirs()) {
-        const dirShort = toHomeShort(dir);
-        const t = readMdSync(join(dir, `${todayISO()}.md`));
-        if (t) blocks.push(`# 今日工作日志 (${todayISO()} @ ${dirShort})\n${stripSmartTag(stripDeletedLines(budgetClip(t, cfg.workspaceBudgetChars)))}`);
-      }
       // v1.7.0：alreadyInjected / injectedSessionIds 已整体删除（记忆正文改走 E 投影）。
       // intro（含记忆公民指令）仍【始终】注入——若因记忆为空而整体返回空串，agent 将不知道
       // 记忆系统存在、不会主动记，形成「无记忆 → 无指令 → 永不记」死循环。
@@ -241,7 +237,7 @@ export function apply(ctx, config) {
       // v1.6.0：hybrid=记忆子代理自动维护日志 + agent 主动维护 MEMORY.md（见 HYBRID_PROACTIVE）。
       const proactive =
         source().memoryMode === "smart"
-          ? "\n\n[记忆说明] 你的跨 session 记忆由 LLM 智能摘要自动维护（每轮结束自动提炼摘要并沉淀 durable 事实到 MEMORY.md），无需主动调用 memory_note / memory_note_user；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。"
+          ? "\n\n[记忆说明] 你的跨 session 记忆由 LLM 智能摘要自动维护（每轮结束自动提炼摘要并沉淀 durable 事实到 MEMORY.md），无需主动调用 memory_note / memory_note_user；读取记忆用 memory_read 工具，scope 默认 'memory'，需要日志时显式传 scope（不要手动 glob/read 记忆文件）。"
           : source().memoryMode === "hybrid"
             ? HYBRID_PROACTIVE
             : "\n\n[记忆公民指令] 你拥有跨 session 的 Markdown 记忆。以下场景【必须】主动调用 memory_note（项目级约定）或 memory_note_user（跨项目个人偏好）落档，不要依赖轮次结束的自动兜底——它只做原始文本截断，无法代替你的高质量总结：\n" +
@@ -253,19 +249,25 @@ export function apply(ctx, config) {
               "判定标准：这条信息「下个 session 的我」还需要吗？不需要（闲聊、一次性操作、显而易见）就不记。格式：一句话结论开头 + 关键细节（命令/路径/数字），不写流水账。";
       const intro = bridged
         ? "你拥有持久化、人类可直接编辑的 Markdown 记忆文件。当前项目已存在 WorkBuddy/CodeBuddy 项目记忆目录，本插件直接读写这些目录（不再单独创建 .deepseek-harness/memory/）。" +
-          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
+          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取记忆用 memory_read 工具，scope 默认 'memory'（用户级 + 项目级 MEMORY.md），需要今日/历史日志时显式传 scope:'daily' 或 'all'（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
+          "注意：上下文中的记忆是**会话起始快照**，不随记忆文件之后的更新自动刷新；需要以当前状态为依据时（改记忆前、或据记忆作答前）用 memory_read 重读。" +
           antiMangle + proactive
         : "你拥有持久化、人类可直接编辑的 Markdown 记忆文件（位于 ~/.deepseek-harness/MEMORY.md，以及各项目的 .deepseek-harness/MEMORY.md（长期记忆）与 .deepseek-harness/memory/（每日日志））。" +
-          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取全部记忆用 memory_read 工具（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
+          "写入记忆：项目级约定用 memory_note 工具，跨项目个人偏好用 memory_note_user 工具；读取记忆用 memory_read 工具，scope 默认 'memory'（用户级 + 项目级 MEMORY.md），需要今日/历史日志时显式传 scope:'daily' 或 'all'（不要手动 glob/read 记忆文件）。用它保持跨 session 一致性；看不到的内容不要编造。" +
+          "注意：上下文中的记忆是**会话起始快照**，不随记忆文件之后的更新自动刷新；需要以当前状态为依据时（改记忆前、或据记忆作答前）用 memory_read 重读。" +
           antiMangle + proactive;
       // 计划模式禁写提示（硬编码默认行为，无开关）：无论记忆模式都追加，让 agent 自觉不写（网关物理兜底仍生效）
       const planNote = state.planModeActive
         ? "\n\n[plan 模式] 当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取记忆用 memory_read，仍可用）。"
         : "";
       const introFull = intro + planNote;
-      // v1.7.0：blocks 仅含今日日志（用户级/项目级 MEMORY.md 已移出，改由 E 投影注入）。
-      // 返回值永非空串（只含 intro 时亦然），避免 harness 对空 section 的处理歧义。
-      return blocks.length ? [introFull, ...blocks].join("\n\n") : introFull;
+      // v1.7.1（特性3）：自定义指令追加在「记忆插件 prompt + 记忆分工 prompt」之后 ——
+      // 拼接顺序即 system prompt 里的实际排布（同一 section 内完成，order 不变）。
+      // 它由用户在设置页配置，内容恒定 → 放 system 零缓存成本，不违反本节的分流原则。
+      const custom = typeof cfg.customInstructions === "string" ? cfg.customInstructions.trim() : "";
+      // v1.7.1：本 section 已无任何动态块（日志迁出 E 投影），直接返回常量指令。
+      // 返回值仍非空串（即便自定义指令为空也含 intro），避免 harness 对空 section 的处理歧义。
+      return custom ? `${introFull}\n\n[用户自定义指令] ${custom}` : introFull;
     },
   });
 

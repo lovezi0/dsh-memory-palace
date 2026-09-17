@@ -210,6 +210,26 @@ assert(inject.includes("llm"), "[1] inject includes 'llm' (smart mode needs it)"
 const text = main.captured.sections[0].text();
 assert(typeof text === "string", "[2] section.text() returns string");
 
+// ---------- [1b] v1.7.1 特性3：自定义指令注入（section 内、位于记忆指令之后） ----------
+console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
+{
+  const blank = await loadPlugin({ customInstructions: "   \n  " });
+  const tb = blank.captured.sections[0].text();
+  assert(tb.trim().length > 0, "[1b] blank-only custom → intro still returned (non-empty)");
+  assert(tb === tb.trim(), "[1b] blank-only custom leaves no stray whitespace");
+
+  const withCustom = await loadPlugin({ customInstructions: "回答一律用中文。\n代码注释用英文。" });
+  const tc = withCustom.captured.sections[0].text();
+  assert(tc.includes("回答一律用中文。"), "[1b] custom text injected into section");
+  assert(tc.includes("[用户自定义指令] 回答一律用中文。"), "[1b] custom text prefixed with [用户自定义指令]");
+  assert(tc.includes("代码注释用英文。"), "[1b] multi-line custom preserved");
+  const atIntro = tc.indexOf("记忆");
+  const atCustom = tc.indexOf("回答一律用中文。");
+  assert(atIntro !== -1 && atIntro < atCustom, "[1b] custom appended AFTER memory instructions");
+  // v1.7.1 特性1 回归保护：日志必须留在 E 投影，混进 section 会让 system 前缀每轮失效。
+  assert(!tc.includes("# 今日工作日志"), "[1b] daily log must NOT leak into section");
+}
+
 // ---------- 场景 A：实质轮次（工具调用）→ 轻量条目写入日志（无 LLM） ----------
 console.log("[A] SUBSTANTIVE TURN → LIGHT ENTRY");
 {
@@ -366,8 +386,8 @@ console.log("[I] memory_note_user");
   assert(count === 1, "[I] user-level dedup = 1");
 }
 
-// ---------- 场景 J：memory_read 聚合（仅日志无 MEMORY.md） ----------
-console.log("[J] memory_read AGGREGATE");
+// ---------- 场景 J：memory_read scope（v1.7.1：默认只读长期记忆，日志须显式请求） ----------
+console.log("[J] memory_read SCOPE");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-j-"));
   const memDir = join(ws, ".workbuddy", "memory");
@@ -379,10 +399,40 @@ console.log("[J] memory_read AGGREGATE");
   const s = fakeSession(ws);
   fire(s, captured, "user/message", { message: { content: "load memory please" } });
   const readTool = captured.tools.find((t) => t.name === "memory_read");
-  const res = await readTool.execute({});
-  assert(res.ok, "[J] read ok");
-  assert(res.memory.includes(yesterday), "[J] yesterday log included");
-  assert(res.memory.includes("昨天定的约定"), "[J] log content included");
+
+  // 默认 scope='memory'：本 fixture 只有日志、没有 MEMORY.md → 不应带出任何日志内容
+  const def = await readTool.execute({});
+  assert(def.ok, "[J] read ok");
+  assert(!def.memory.includes("昨天定的约定"), "[J] default scope=memory excludes logs");
+  assert(def.message.includes("scope=memory"), "[J] message echoes scope");
+
+  // scope='project'（v1.7.1 更名，原 node；与 memory_write 的写侧 scope 同名）：本 fixture 无工作区 MEMORY.md → 不返回内容
+  const projRes = await readTool.execute({ scope: "project" });
+  assert(projRes.ok && projRes.message.includes("scope=project"), "[J] project scope accepted and echoed");
+  assert(!projRes.memory.includes("昨天定的约定"), "[J] project excludes logs (no workspace MEMORY.md in fixture)");
+
+  // v1.7.1 标题修正：project 应读到 buddy 布局的 MEMORY.md，且标题为实际文件路径（而非日志目录）
+  await fs.writeFile(join(memDir, "MEMORY.md"), "# 项目约定\n工作区级内容\n", "utf8");
+  const projRes2 = await readTool.execute({ scope: "project" });
+  assert(projRes2.memory.includes("工作区级内容"), "[J] project reads workspace MEMORY.md");
+  assert(projRes2.memory.includes("MEMORY.md"), "[J] block title uses the MEMORY.md path (not the log dir)");
+
+  // scope='today'：不含昨日的日志
+  const todayRes = await readTool.execute({ scope: "today" });
+  assert(!todayRes.memory.includes("昨天定的约定"), "[J] today excludes yesterday's log");
+
+  // scope='yesterday'：应带出昨日的日志
+  const yRes = await readTool.execute({ scope: "yesterday" });
+  assert(yRes.memory.includes("昨天定的约定"), "[J] yesterday includes yesterday's log");
+
+  // scope='daily'（近三天）：同样带出昨日的日志
+  const daily = await readTool.execute({ scope: "daily" });
+  assert(daily.ok && daily.memory.includes(yesterday), "[J] daily: yesterday log included");
+  assert(daily.memory.includes("昨天定的约定"), "[J] daily: log content included");
+
+  // scope='all'：同样应带出日志
+  const all = await readTool.execute({ scope: "all" });
+  assert(all.ok && all.memory.includes("昨天定的约定"), "[J] all: log content included");
 }
 
 // ---------- 场景 K：工具/代码执行期报错（turn/end=completed，非 error）→ 仍捕获 (issue 1 修复) ----------
@@ -882,7 +932,7 @@ console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt
   const s6 = fakeSession(ws6);
   fire(s6, cap6, "plan/mode", { active: true });
   const readTool = cap6.tools.find((t) => t.name === "memory_read");
-  const res6 = await readTool.execute({});
+  const res6 = await readTool.execute({ scope: "daily" }); // 内容在日志里，须显式指定 scope（v1.7.1）
   assert(res6.ok && res6.memory.includes("约定A"), "[P6] plan: memory_read still works");
 
   // P7：plan 下手动蒸馏（distillProjectMemory）豁免，仍写盘（真人显式意图）

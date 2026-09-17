@@ -1,13 +1,13 @@
 <svg viewBox="0 0 680 636" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
   <title>混合模式（hybrid）调用时序图</title>
-  <desc>会话首轮注入记忆正文与提示词；每轮 turn/end 由记忆子代理判定并写入今日日志（log_read_section 一次读多章节、失败不降级下轮补蒸）；agent 主动调用工具维护 MEMORY.md。</desc>
+  <desc>会话首轮起，用户级/项目级 MEMORY.md 与今日日志由 agent/pre-step 投影为常驻 user 消息（按文件身份各只注一次）；每轮 turn/end 由记忆子代理判定并写入今日日志（log_read_section 一次读多章节、失败不降级下轮补蒸）；agent 主动调用工具维护 MEMORY.md。</desc>
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
   </defs>
 
-  <text x="40" y="26" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">混合模式（hybrid）调用时序 · v1.6.0</text>
+  <text x="40" y="26" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">混合模式（hybrid）调用时序 · v1.7.1</text>
 
   <rect x="32" y="44" width="56" height="24" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
   <text x="60" y="60" font-family="sans-serif" font-size="12" text-anchor="middle" dominant-baseline="central" fill="#0C447C">会话</text>
@@ -30,8 +30,8 @@
   <path d="M60 108 L185 108" fill="none" stroke="#185FA5" stroke-width="1.2" marker-end="url(#arr)"/>
   <text x="122" y="102" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#185FA5">system-prompt/assemble</text>
   <path d="M185 128 L60 128" fill="none" stroke="#185FA5" stroke-width="1.2" marker-end="url(#arr)"/>
-  <text x="122" y="122" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#185FA5">段一+段二 + 记忆正文块（仅首轮）</text>
-  <text x="40" y="148" font-family="sans-serif" font-size="11" fill="#888780">compaction/* 后清除 injectedSessionIds → 下次 assemble 重注正文</text>
+  <text x="122" y="122" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#185FA5">段一 + 段二（恒定，动态内容已迁投影）</text>
+  <text x="40" y="148" font-family="sans-serif" font-size="11" fill="#888780">compaction 移出投影消息 → 身份判据判为缺失 → 自动重注磁盘最新版</text>
 
   <text x="40" y="176" font-family="sans-serif" font-size="12" font-weight="500" fill="#5F5E5A">B · 每轮 turn/end</text>
   <path d="M60 190 L185 190" fill="none" stroke="#5F5E5A" stroke-width="1.2" marker-end="url(#arr)"/>

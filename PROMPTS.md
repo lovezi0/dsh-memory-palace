@@ -31,14 +31,15 @@
 
 ## 二、系统提示词注入（记忆公民指令 / 记忆说明）
 
-真源：`src/index.mjs` 的 `systemPrompt.section.text()` 闭包。返回内容由「基础说明 + 路径简写 + 模式分支指令 + plan 提示 + 今日日志块」拼接。
+真源：`src/index.mjs` 的 `systemPrompt.section.text()` 闭包。返回内容由「基础说明 + 路径简写 + 模式分支指令 + plan 提示 + **自定义指令（v1.7.1）**」拼接（**v1.7.1 起已无任何动态块**）。
 
-> **section 不含记忆正文。** 用户级/项目级 `MEMORY.md` 经 E 投影（`src/projection.mjs`）注入为常驻 user 消息（每个 step 可见），见 §2.5。section 只含「常量指令（intro）+ 今日工作日志」。分流依据是变化频率：MEMORY.md 低频 durable → 投影；今日日志高频易变 → 留 section 每步注入（不进历史以免膨胀）。
+> **section 不含任何易变内容。** 用户级/项目级 `MEMORY.md` 与**今日工作日志**均经 E 投影（`src/projection.mjs`）注入为常驻 user 消息（每个 step 可见），见 §2.6。section 只含「常量指令（intro + 分工说明 + 用户自定义指令）」。分流依据是**内容是否恒定**：恒定 → 留 section（system prompt 位于序列最前，内容恒定才不毁前缀缓存）；易变 → 走投影追加到历史尾部、按**文件身份**各只注一次。
 
 ### 2.1 基础说明（两种形态，按是否桥接 buddy 目录切换）
 - **已桥接**（`paths.buddyDirs().length > 0`）：告知 agent 当前项目存在 WorkBuddy/CodeBuddy 记忆目录，本插件直接读写这些目录，不再单独创建 `.deepseek-harness/memory/`。
 - **未桥接**：告知记忆位于 `~/.deepseek-harness/MEMORY.md` 及项目 `.deepseek-harness/MEMORY.md`（长期）+ `.deepseek-harness/memory/`（每日日志）。
-- 两版均强调：写入用 `memory_note`（项目级）/ `memory_note_user`（用户级），读取用 `memory_read`（**禁止手动 glob/read 记忆文件**）。
+- 两版均强调：写入用 `memory_note`（项目级）/ `memory_note_user`（用户级），读取用 `memory_read`（`scope` 默认 `memory` = 用户级 + 项目级，要日志须显式传 `today`/`yesterday`/`daily`/`all`；**禁止手动 glob/read 记忆文件**）。
+- **v1.7.1 快照提示**：两版 intro 均追加「上下文中的记忆是**会话起始快照**，不随记忆文件之后的更新自动刷新；需要以当前状态为依据时（改记忆前、据记忆作答前）用 `memory_read` 重读」——因为投影按文件身份只注入一次（见 `src/projection.mjs` 与 DEVELOPMENT.md「记忆注入通道」）。
 
 ### 2.2 路径简写硬约束 `antiMangle`
 > 提及记忆文件路径时一律用 `~` 简写（如 `~/.deepseek-harness/MEMORY.md`），不要逐字拼写绝对路径——你转述绝对路径容易漏掉目录分隔符。
@@ -48,7 +49,7 @@
 ### 2.3 模式分支指令 `proactive`（按 `memoryMode` 切换）
 | 模式 | 注入文案 | 意图 |
 |---|---|---|
-| `smart` | 「你的跨 session 记忆由 LLM 智能摘要自动维护（每轮结束自动提炼摘要并沉淀 durable 事实到 MEMORY.md），无需主动调用 memory_note / memory_note_user；读取全部记忆用 memory_read」 | 关掉主动记，交给摘要链路 |
+| `smart` | 「你的跨 session 记忆由 LLM 智能摘要自动维护（每轮结束自动提炼摘要并沉淀 durable 事实到 MEMORY.md），无需主动调用 memory_note / memory_note_user；读取记忆用 memory_read，scope 默认 'memory'，需要日志时显式传 scope」 | 关掉主动记，交给摘要链路 |
 | `plugin` | 「记忆公民指令」：列举 5 类**必须**主动落档场景（①完成任务/产出结果 ②修复 bug/根因 ③验证 build/test/CI ④里程碑/决策/约定 ⑤用户偏好约束），判定标准「下个 session 的我还需要吗」，格式「一句话结论 + 关键细节」 | 引导 agent 主动记 |
 | `hybrid` | 「记忆分工说明」`HYBRID_PROACTIVE`：①日志由子代理每轮自动维护（含去重标删），agent 无需记录过程；②MEMORY.md 由 agent 主动调 `memory_write` 维护（章节化）；③项目级仅双门禁满足时可 `memory_reorganize` 全量重整，否则只能 `memory_update_section` 章节级修正；④用户级禁止重整 | 日志/长期记忆职责分离，agent 主写 MEMORY.md |
 
@@ -57,14 +58,22 @@
 ### 2.4 plan 模式禁写提示 `planNote`
 仅 `state.planModeActive` 时追加：「当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取用 memory_read）。」属于软提示，网关物理兜底仍生效。
 
-### 2.5 记忆正文投影（非 prompt，但决定模型可见内容）
+### 2.5 自定义指令 `customInstructions`（v1.7.1 特性3）
+
+真源：设置页「自定义指令」板块（config 字段 `customInstructions`）。**非空**（trim 后）时以 **`[用户自定义指令]`** 为前缀、追加在「模式分支指令 + plan 提示」之后 —— 即 system prompt 里呈现为「记忆插件 prompt → 记忆分工 prompt → **[用户自定义指令] …**」的顺序。前缀与 `[记忆公民指令]` / `[plan 模式]` 同风格，便于模型识别段落来源。
+
+- 它是**恒定内容**（用户配置一次不变），故留在 section 而非走投影 —— 与分流依据一致，零缓存成本。
+- 留空或纯空白 → 不注入，`text()` 原样返回 `introFull`（不留空段、不留空白）。
+- 对全部会话与三种记忆模式生效；不进 E 投影、不参与投影身份去重。
+
+### 2.6 记忆正文投影（非 prompt，但决定模型可见内容）
 
 真源：`src/projection.mjs`。用户级与项目级 `MEMORY.md` 经 `agent/pre-step` 投影为**两条独立的常驻 user 消息**：
 
 - **内容形态**：`# 用户级记忆 (<~ 简写路径>)\n<正文>` / `# 项目级记忆 (<~ 简写路径>)\n<正文>`；正文经 `budgetClip` 按 `userBudgetChars` / `workspaceBudgetChars` 截断，并剥 `[smart]` 标签与删除线墓碑。
 - **source 标注**：`{ kind: 'plugin', plugin: 'dsh-memory-palace', form: 'instructions' }`（`form` 必须是宿主 `ContextForm` 联合内的合法值）。
 - **拆两条消息**的原因：否则「项目记忆一改，用户记忆连带重发」。
-- **去重与重注**：内容不变只写一次；上下文压缩把消息移出 surface 后，后续 step 自动重注。
+- **去重与重注**：按**文件身份**（消息首行 heading，含目标路径与日期）去重 —— 同一文件只注一次，内容再变也不重注；compaction 把消息移出 surface 后，后续 step 自动重注磁盘最新版。
 - **指令优先级说明**：投影是 user 角色，强约束建议放 harness 的 `AGENTS.md`（system 优先级），`MEMORY.md` 只放动态事实。
 
 ---

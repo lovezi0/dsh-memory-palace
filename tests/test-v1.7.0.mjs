@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createPaths } from "../src/common/paths.mjs";
 import { ensureLogHeader, upsertSectionText } from "../src/common/sections.mjs";
+import { todayISO } from "../src/common/text.mjs";
 import { buildProjections, registerProjection } from "../src/projection.mjs";
 import { projectTurnMessages } from "../src/hybrid/subagent.mjs";
 import { SUBAGENT_SYSTEM } from "../src/hybrid/prompts.mjs";
@@ -253,13 +254,31 @@ console.log("\n[特性1] buildProjections");
   });
   check("预算截断生效", () => {
     setup();
-    const msgs = build({ userBudgetChars: 5, workspaceBudgetChars: 5 });
-    for (const m of msgs) assert.ok(m.content[0].text.length < 200, "预算未截断");
+    // 用户级指向不存在的路径：真实 ~/.deepseek-harness/MEMORY.md 的「结构行」会被 budgetClip
+    // 无条件保留（head 不截），长度随真实文件增长而漂移，会让本断言变成环境依赖的脆弱测试。
+    const msgs = build({ userBudgetChars: 5, workspaceBudgetChars: 5, userMemoryPath: "~/.__no_such_dir__/MEMORY.md" });
+    assert.ok(msgs.length > 0, "应至少产出项目级投影");
+    for (const m of msgs) assert.ok(m.content[0].text.length < 200, `预算未截断：${m.content[0].text.length} 字符`);
   });
   check("无记忆文件 → 空数组（不报错）", () => {
     resetTmp();
     // 用户级指向不存在的路径，避免读到真实 ~/.deepseek-harness/MEMORY.md 污染断言。
     assert.deepEqual(build({ userMemoryPath: "~/.__no_such_dir__/MEMORY.md" }), []);
+  });
+  check("v1.7.1 今日日志并入投影：存在当日日志 → 产出含日期与目录的日志投影", () => {
+    setup();
+    const d = todayISO();
+    writeFileSync(join(TMP, `.deepseek-harness/memory/${d}.md`), `# ${d}\n\n## 章节\n- 条目`, "utf8");
+    const heads = build().map((m) => norm(m.content[0].text.split("\n")[0]));
+    assert.ok(
+      heads.some((h) => h.includes("今日工作日志") && h.includes(d)),
+      `缺今日日志投影，实得: ${heads.join(" | ")}`,
+    );
+  });
+  check("v1.7.1 今日日志并入投影：无当日日志 → 不产出日志投影", () => {
+    setup();
+    const heads = build().map((m) => norm(m.content[0].text.split("\n")[0]));
+    assert.ok(!heads.some((h) => h.includes("今日工作日志")), `无日志却产出: ${heads.join(" | ")}`);
   });
 }
 
@@ -272,9 +291,9 @@ console.log("\n[特性1] registerProjection 钩子");
   };
   const cfg = baseCfg({ userMemoryPath: "~/.__nonexistent__/MEMORY.md", buddyWorkspaceMemoryDirs: [] });
   const paths = createPaths(() => cfg, () => TMP);
-  const capture = (p = paths) => {
+  const capture = (p = paths, c = cfg) => {
     let listener = null;
-    registerProjection({ ctx: { on: (n, f) => { if (n === "agent/pre-step") listener = f; } }, getConfig: () => cfg, paths: p });
+    registerProjection({ ctx: { on: (n, f) => { if (n === "agent/pre-step") listener = f; } }, getConfig: () => c, paths: p });
     return listener;
   };
   const mkSession = (nodes = [], eventAt = () => undefined) => ({ surface: { nodes }, eventAt });
@@ -293,19 +312,39 @@ console.log("\n[特性1] registerProjection 钩子");
     assert.equal(idx, 1, `期望 idx=1，实际 ${idx}`);
   });
 
-  await checkAsync("decision 已含同 payload → 不重复注入", async () => {
+  await checkAsync("v1.7.1 判据=文件身份：同 heading 但正文不同 → 仍不重注", async () => {
     const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
     const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
-    const out = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [proj] });
-    assert.equal(out.messages.length, 1);
+    const heading = proj.content[0].text.split("\n")[0];
+    // 伪造同身份的旧投影（模拟「agent 之后又往同一个文件里写了内容」）
+    const stale = { ...proj, content: [{ type: "text", text: `${heading}\n- 旧版正文，与当前磁盘内容毫无重叠` }] };
+    const out = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [stale] });
+    assert.equal(out.messages.length, 1, "同身份不应新增投影");
   });
 
-  await checkAsync("surface 已含同 payload → 不重复注入（compaction 移出后自动重注）", async () => {
+  await checkAsync("surface 已有同 heading → 不重注", async () => {
     const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
     const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
     const session = mkSession([10], () => ({ type: "user/message", data: proj }));
     const out = await run(listener, { session }, [], { kind: "enter", messages: [] });
     assert.equal(out.messages.length, 0);
+  });
+
+  await checkAsync("surface 身份不同（另一路径）→ 视为新对象，重注", async () => {
+    const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
+    const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
+    const other = { ...proj, content: [{ type: "text", text: "# 项目级记忆 (/__other__/MEMORY.md)\n- 别处的记忆" }] };
+    const session = mkSession([10], () => ({ type: "user/message", data: other }));
+    const out = await run(listener, { session }, [], { kind: "enter", messages: [] });
+    assert.equal(out.messages.length, 1, "换身份应重注");
+  });
+
+  await checkAsync("非本插件消息不参与身份比对（source 归属校验）", async () => {
+    const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
+    const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
+    const imposter = { content: proj.content, source: { kind: "user" } }; // 同正文但非本插件
+    const out = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [imposter] });
+    assert.equal(out.messages.length, 2, "source 不属本插件时不应误判为已注入");
   });
 
   await checkAsync("reject 决策原样返回", async () => {
@@ -329,6 +368,24 @@ console.log("\n[特性1] registerProjection 钩子");
       async () => ({ kind: "enter", messages: [] }),
     );
     assert.equal(out.kind, "enter");
+  });
+
+  await checkAsync("跨目录各自独立：遮住 dsh 那条，buddy 那条仍注入", async () => {
+    resetTmp();
+    mk(".deepseek-harness/memory");
+    mk(".workbuddy/memory");
+    writeFileSync(join(TMP, ".deepseek-harness/MEMORY.md"), "# dsh 项目记忆\n- dsh 条目", "utf8");
+    writeFileSync(join(TMP, ".workbuddy/memory/MEMORY.md"), "# buddy 项目记忆\n- buddy 条目", "utf8");
+    const c2 = baseCfg({ userMemoryPath: "~/.__nonexistent__/MEMORY.md" });
+    const l2 = capture(createPaths(() => c2, () => TMP), c2);
+    const first = await run(l2, { session: mkSession() }, [], { kind: "enter", messages: [] });
+    assert.equal(first.messages.length, 2, `期望 dsh + buddy 各一条，实得 ${first.messages.length}`);
+    const dshMsg = first.messages.find((m) => norm(m.content[0].text).includes(".deepseek-harness/MEMORY.md"));
+    assert.ok(dshMsg, "未找到 dsh 项目级投影");
+    const session = mkSession([10], () => ({ type: "user/message", data: dshMsg }));
+    const out = await run(l2, { session }, [], { kind: "enter", messages: [] });
+    assert.equal(out.messages.length, 1, "只应补注入未被遮住的那条");
+    assert.ok(norm(out.messages[0].content[0].text).includes(".workbuddy/memory/MEMORY.md"));
   });
 }
 

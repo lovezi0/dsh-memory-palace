@@ -1,20 +1,23 @@
 # 配置
 
-*本文件从 README 拆分而出，集中收录 dsh-memory-palace 的全部配置项。所有配置均可在 **DSH 设置 →「记忆」面板**中图形化调整，无需改配置文件*
+*本文件从 README 拆分而出，集中收录 dsh-memory-palace 的全部配置项。所有配置均可在 **DSH 设置 →「记忆」面板**中图形化调整（v1.7.1 起面板按板块折叠：默认只显示板块标题与说明，点击展开），无需改配置文件*
 
-## 基础（设置页「记忆」主面板）
+## 核心（设置页「记忆 → 核心」卡片）
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 用户级记忆路径 | `userMemoryPath` | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
-| 工作区记忆目录 | `workspaceMemoryDir` | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
-| 日志保留天数 | `dailyLogRetentionDays` | `30` | 每日日志保留天数，过期迁移进 `MEMORY.md`。**混合模式下不可用**（hybrid 日志永不过期不删，作为子代理维护的证据层保留） |
-| 用户级记忆字数上限 | `userBudgetChars` | `4000` | 注入系统提示词的用户级记忆长度上限（字符） |
-| 工作区级记忆字数上限 | `workspaceBudgetChars` | `3000` | 注入系统提示词的工作区级记忆长度上限（字符） |
 | 桥接 Buddy 记忆 | `bridgeBuddyMemory` | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
 | Buddy 记忆目录列表 | `buddyWorkspaceMemoryDirs` | `[".workbuddy/memory", ".codebuddy/memory"]` | 要桥接的 buddy 目录列表（按优先级，已存在的全部同步写入） |
 
 > **桥接规则**：`bridgeBuddyMemory` 开启时，**读取**恒含 dsh 原生目录，并叠加所有已存在的 buddy 目录（顺序 `.deepseek-harness` > `.workbuddy` > `.codebuddy`）；**写入**优先 buddy 目录，都不存在时才回退 dsh 目录。buddy 目录绝不被主动创建。
+
+## 自定义指令（设置页「记忆 → 自定义指令」卡片）
+
+| 配置项 | 设置 key | 默认值 | 说明 |
+|---|---|---|---|
+| 自定义指令内容 | `customInstructions` | `""`（空=不注入） | 非空时经系统提示词注入，位置在「记忆插件 prompt → 记忆分工 prompt」**之后**。用于承载不适合写进用户记忆的特殊指令。对全部会话与三种记忆模式生效，保存后无需重启 |
+
+> **为什么走 system prompt 而非写进记忆**：它是恒定内容（用户配置一次不变），放 system 零缓存成本；记忆正文属易变内容，走 E 投影（见 DEVELOPMENT.md「记忆注入通道」）。
 
 ## 自动记录（设置页「记忆 → 自动记录」卡片）
 
@@ -30,13 +33,23 @@
 | 重整冷却(天) | `reorgCooldownDays` | `7` | 混合模式专用：项目级 MEMORY.md 全量重整的冷却天数（距上次重整）；与「超出注入预算」双条件**同时满足**才允许 `memory_reorganize`；时间戳以 HTML 注释落在 MEMORY.md 文件尾。**仅「混合模式」下显示** |
 | 子代理日志回喂预算(字符) | `subagentLogBudget` | `20000` | 混合模式专用：记忆子代理回喂今日工作日志的字符上限；超出时仅回喂章节目录，子代理用 `log_read_section` 按需读取章节。**仅「混合模式」下显示** |
 
+## 存储路径与预算（设置页「记忆 → 存储路径与预算」卡片）
+
+| 配置项 | 设置 key | 默认值 | 说明 |
+|---|---|---|---|
+| 用户级记忆路径 | `userMemoryPath` | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
+| 工作区记忆目录 | `workspaceMemoryDir` | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
+| 日志保留天数 | `dailyLogRetentionDays` | `30` | 每日日志保留天数，过期迁移进 `MEMORY.md`。**混合模式下不可用**（hybrid 日志永不过期不删，作为子代理维护的证据层保留） |
+| 用户级记忆字数上限 | `userBudgetChars` | `4000` | 用户级记忆的注入 / E 投影长度上限（字符） |
+| 工作区级记忆字数上限 | `workspaceBudgetChars` | `3000` | 工作区记忆与**今日日志**的注入 / E 投影长度上限（字符）；同时用作 `memory_read` 读日志时的截断预算 |
+
 ## 开发（设置页「记忆 → 开发」卡片）
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
 | 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖智能模式摘要与手动蒸馏两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
 | 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。info 级别仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；配合 `distillLogLevel=debug`（见下）会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障。平时关闭 |
-| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile/settings.yaml 设置。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
+| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 DSH home（`$DSH_HOME`）根目录的 settings.yaml 设置。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
 
 > **设置保存**：设置页保存**真正落盘**（写入 settings.yaml），无需改配置文件。
 >

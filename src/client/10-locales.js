@@ -3,8 +3,13 @@
       title: "记忆",
       intro: "memory-palace 记忆宫殿：跨会话持久化的 Markdown 记忆。",
       core: "核心",
+      coreDesc: "buddy 记忆桥接与项目记忆目录",
+      custom: "自定义指令",
+      customDesc: "不适合写进用户记忆的特殊指令，经系统提示词注入",
       smartSummary: "自动记录",
+      smartSummaryDesc: "记忆模式、自动记录与模型参数",
       storage: "存储路径与预算",
+      storageDesc: "记忆文件路径、日志保留与注入预算",
       bridgeLabel: "桥接 buddy 项目记忆",
       bridgeHint: "项目已存在 .workbuddy / .codebuddy 记忆目录时直接读写，不再建 .deepseek-harness/memory/",
       dirsLabel: "buddy 记忆目录（逗号分隔，按序优先）",
@@ -34,6 +39,8 @@
       subagentLogBudgetHint: "记忆子代理回喂今日工作日志的字符上限；超出时仅回喂章节目录，子代理按需读取章节。默认 20000。",
       summaryModelLabel: "模型",
       summaryModelHint: "记忆插件当前使用的模型（智能模式会话摘要 / 手动蒸馏 / hybrid 记忆子代理共用）。留空=复用当前会话的 provider/model；也可固定廉价小模型省 token。",
+      expand: "展开",
+      collapse: "收起",
       save: "保存",
       saving: "保存中…",
       discard: "放弃",
@@ -60,6 +67,7 @@
       distillDebugLogLabel: "蒸馏调试日志",
       distillDebugLogHint: "开启后向 dsh 服务端控制台（stderr）输出蒸馏 LLM 调用诊断。info 级别仅输出元数据（不含文本）；配合 distillLogLevel=debug 会额外打印 LLM 原始响应（分隔符包裹），仅限受信本地排障。",
       dev: "开发",
+      devDesc: "蒸馏调试日志与超时",
       distillTimeoutLabel: "蒸馏超时（秒）",
       distillTimeoutHint: "单次蒸馏 LLM 调用的超时上限（秒）；超时视为失败并降级。覆盖智能模式摘要与手动蒸馏，默认 60 秒。",
       summaryMaxTokensLabel: "会话摘要最大 Token",
@@ -67,7 +75,10 @@
       projectMaxTokensLabel: "项目蒸馏最大 Token",
       projectMaxTokensHint: "最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 8000。",
       feedbackEnabledLabel: "回喂存量记忆",
-      feedbackEnabledHint: "每次蒸馏时附带项目级 + 用户级记忆作为参考，使其能基于既有记忆做增量维护（delete 仅手动蒸馏开放）。混合模式下仅手动触发蒸馏受影响（自动路径走记忆子代理，自带日志回喂）。默认关。"
+      feedbackEnabledHint: "每次蒸馏时附带项目级 + 用户级记忆作为参考，使其能基于既有记忆做增量维护（delete 仅手动蒸馏开放）。混合模式下仅手动触发蒸馏受影响（自动路径走记忆子代理，自带日志回喂）。默认关。",
+      customLabel: "自定义指令内容",
+      customHint: "非空时注入系统提示词，位置在记忆插件与分工说明之后。对全部会话生效；留空则不注入。",
+      customPlaceholder: "例如：回答用中文；代码注释用英文；提交信息用祈使句…"
     };
 
     const en = {
@@ -75,8 +86,13 @@
       title: "Memory",
       intro: "memory-palace: persistent, human-readable Markdown memory across sessions.",
       core: "Core",
+      coreDesc: "Buddy memory bridging and workspace memory dirs",
+      custom: "Custom instructions",
+      customDesc: "Special instructions that do not belong in user memory, injected via the system prompt",
       smartSummary: "Auto-record",
+      smartSummaryDesc: "Memory mode, auto-record and model parameters",
       storage: "Storage & budgets",
+      storageDesc: "Memory file paths, log retention and injection budgets",
       bridgeLabel: "Bridge buddy project memory",
       bridgeHint: "Read/write directly into existing .workbuddy / .codebuddy memory dirs instead of creating .deepseek-harness/memory/",
       dirsLabel: "Buddy memory dirs (comma-separated, first wins)",
@@ -106,6 +122,8 @@
       subagentLogBudgetHint: "Max chars of today's daily log fed back to the memory sub-agent; beyond this only the chapter TOC is fed and the sub-agent reads sections on demand. Default 20000.",
       summaryModelLabel: "Model",
       summaryModelHint: "The model currently used by the memory plugin (shared by smart-mode session summarization / manual distillation / the hybrid memory sub-agent). Leave empty to reuse the current session's provider/model, or pin a cheap model (provider/model) to save tokens.",
+      expand: "Expand",
+      collapse: "Collapse",
       save: "Save",
       saving: "Saving…",
       discard: "Discard",
@@ -132,6 +150,7 @@
       distillDebugLogLabel: "Distill debug log",
       distillDebugLogHint: "When on, prints distill LLM call diagnostics to the dsh server console (stderr). info level prints metadata only (no text); with distillLogLevel=debug it additionally prints the raw LLM response (wrapped in delimiters), for trusted local troubleshooting only.",
       dev: "Developer",
+      devDesc: "Distill debug log and timeout",
       distillTimeoutLabel: "Distill timeout (s)",
       distillTimeoutHint: "Timeout (in seconds) for a single distill LLM call; on timeout it fails and degrades. Covers both smart-mode summary and manual distillation. Default 60s.",
       summaryMaxTokensLabel: "Session summary max tokens",
@@ -139,5 +158,8 @@
       projectMaxTokensLabel: "Project distill max tokens",
       projectMaxTokensHint: "Final output soft budget (prompt constraint, thinking not limited; actual hard cap is the model's own maxTokens). Default 8000.",
       feedbackEnabledLabel: "Feed existing memory into distillation",
-      feedbackEnabledHint: "Feed the project-level + user-level memory in as reference on every distillation so the LLM can maintain existing memory incrementally (delete is only allowed via manual distillation). In hybrid mode only manual distillation is affected (the automatic path runs through the memory sub-agent, which feeds the log itself). Off by default."
+      feedbackEnabledHint: "Feed the project-level + user-level memory in as reference on every distillation so the LLM can maintain existing memory incrementally (delete is only allowed via manual distillation). In hybrid mode only manual distillation is affected (the automatic path runs through the memory sub-agent, which feeds the log itself). Off by default.",
+      customLabel: "Custom instruction text",
+      customHint: "When non-empty it is injected into the system prompt right after the memory-plugin and memory-roles instructions. Applies to every session; leave empty to inject nothing.",
+      customPlaceholder: "e.g. Answer in Chinese; write code comments in English; use imperative commit subjects…"
     };
