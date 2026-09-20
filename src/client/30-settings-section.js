@@ -108,6 +108,9 @@
               }
             } else if (field === "buddyWorkspaceMemoryDirs") {
               section[field] = text.split(",").map((s) => s.trim()).filter(Boolean);
+            } else if (field === "silentPresets") {
+              // v1.7.2：数组型配置（同 buddyWorkspaceMemoryDirs）。空串 → 空数组 = 关闭该机制。
+              section[field] = text.split(",").map((s) => s.trim()).filter(Boolean);
             } else {
               if (text !== "") section[field] = text;
             }
@@ -405,7 +408,18 @@
               ...num("buddyWorkspaceMemoryDirs"),
               type: "text",
               placeholder: ".workbuddy/memory, .codebuddy/memory"
-            }), "buddyWorkspaceMemoryDirs")
+            }), "buddyWorkspaceMemoryDirs"),
+          // v1.7.2：静默预设（极简模式等）。命中后本插件在该会话整体隐身（提示词/投影/工具/写入/子代理）。
+          // 用普通文本输入（非 num —— 这里填的是预设 id 列表，不是数字）。
+          row(t("silentPresetsLabel"), t("silentPresetsHint"),
+            h("input", {
+              type: "text",
+              value: draft.silentPresets,
+              disabled,
+              style: { ...inputStyle, borderColor: "var(--dsw-alias-border-l2, #e5e7eb)" },
+              placeholder: "minimal",
+              onChange: (e) => edit("silentPresets", e.target.value)
+            }), "silentPresets")
         ]),
         // v1.7.1（特性3）：自定义指令。非空时经 system prompt 追加到「记忆分工说明」之后；
         // 它是恒定内容（用户配置一次不变），故放 section 而非 E 投影 —— 零缓存成本。

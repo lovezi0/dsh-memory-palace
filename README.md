@@ -2,7 +2,7 @@
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.5-rc.1](https://img.shields.io/badge/DeepSeek%20Harness-0.1.5--rc.1-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.6-alpha.2](https://img.shields.io/badge/DeepSeek%20Harness-0.1.6--alpha.2-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
 ## 特性
 
@@ -42,9 +42,11 @@
 **读取（每轮对话）**——两条通道并行：
 
 ```
-① 长期记忆：全程常驻，每个步骤都可见；内容未变只写一次，压缩后自动重注
-② 今日日志：随系统提示词按轮次注入（高频变化，不进对话历史以免膨胀）
+① 系统提示词（恒定）：记忆公民指令 / 自定义指令等固定内容，前缀缓存友好
+② 对话历史投影（易变）：用户级 + 项目级长期记忆、今日日志——按文件身份各注入一次，压缩后自动重注最新版
 ```
+
+> **极简模式（静默预设）**：宿主的「模式」= agent 平面预设（`presets/*/agent.cordis.yml`），官方 minimal 用 persona `complete: true` 独占系统提示词，是刻意留白的「裸测环境」（跑分口径）。但本插件注册在 host 平面，各通道对**每个会话**都生效（`complete` 只吞 system 提示词、**不裁工具**），所以必须按会话自行静默。默认 `silentPresets = ["minimal"]` 已覆盖官方极简模式：命中预设的会话里，系统提示词、记忆投影、7 个记忆工具（**schema 一并隐身，零 token 足迹**）、turn-end 自动写入与 hybrid 记忆子代理**全部关闭**，语义等价于该会话没装本插件，不留半注入状态。判据取会话创建头 `agentPreset`（含未显式指定时的部署默认）与预设切换事件；判据缺失一律 fail-open（不静默），不会因识别不到而丢记忆。要静默其它预设，在设置页「静默预设」里加 id（逗号分隔）。
 
 **写入（每轮结束）**——经「防闲聊闸门」判定后异步追加：
 
@@ -72,13 +74,13 @@
 
 ## 安装
 
-前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。
+前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。插件声明的 **dsh 下限为 `0.1.5-rc.1`**（写进 `peerDependencies` 门禁，低于此版本装载期即挡），**已核验至 `0.1.6-alpha.2`**（契约 1–12 与插件占用的宿主面全部通过）。
 
 方式一：直接通过 GitHub 安装（推荐，`lib/` 构建产物已随仓库分发，装即用）
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.7.1
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.7.2-alpha.1
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -119,6 +121,9 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.7.2**
+    - **1.7.2-alpha.1**
+        - 💪dsh Agent 预设[极简模式]时禁用记忆注入、记忆生成、记忆工具
 - **1.7.1**
     - 💪移除日志重注机制优化缓存命中降低堆积冗余
     - 💪记忆设置UI优化

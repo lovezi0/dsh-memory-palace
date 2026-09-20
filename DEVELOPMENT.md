@@ -97,6 +97,23 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 > 实测（`testdata/session.v3.jsonl`，10 turn / 253 请求）：v1.7.0「日志走 section」形态下命中率仅 **94.53%**，
 > 9 次全量重算吃掉了 86.5% 的 miss token；日志迁出后预期 **≥ 99.5%**（除会话首个请求外无 cold）。
 
+**极简模式 / 静默预设（v1.7.2）**：宿主把「模式」实现为 **agent 平面预设**（`packages/preset/agent-presets/presets/*/agent.cordis.yml`）——官方 `minimal` 用 persona `complete: true` 独占 system prompt，并关掉 runtime context，是刻意留白的「裸测环境」（跑分口径）。`dsh-system-prompt` 装配末尾会把 sections 收缩为 `[completeSection]`（`lib/index.js:332-356`），harness identity / 所有插件 section / assemble 瀑布的修改一并作废——**契约内行为，不是注入失败**。
+
+关键点在于：本插件注册在 **host 平面**（profile bundle 的 insert），而预设只决定 agent 平面的工具/prompt/skills。于是「预设不带它」并不会让它停下——`systemPrompt.section`（全局层）、`agent/pre-step` 投影、`ctx.tools.register`（全局工具层）对**每个 agent** 都生效，且 `complete` 只吞 sections、**不裁 tools**。实测症状：极简模式下 section 被吞，但记忆正文仍经 E 投影进历史、7 个记忆工具 schema 照发。故必须**自行按会话判定并整体静默**。
+
+实现（`silentPresets`，默认 `["minimal"]`）：
+
+| 通道 | 闸位 | 判据来源 |
+|---|---|---|
+| system section | `text(context)` 内 return `""` | `context.agent.session`（宿主 `assembleContextFor` = `{ agent, scope, signal }`） |
+| E 投影 | `agent/pre-step` 钩子 + `buildProjections({ session })` 提前返回 | `agent.session` |
+| turn-end 写入 / 错误捕获 / hybrid 子代理 | `_settle()` 开头提前返回（子代理分支在其下方，天然被拦） | `state.activeSession` |
+| 工具 schema 隐身 | `agent/created` 戴掩码（`agent.ctx.tools.restrict({ deny: [7 工具] })`）；空会话切换预设时由 `agent-preset/selected` 重新同步（戴上/摘下），`agent/disposed` 释放 | `agent.session` |
+
+判据 = 会话创建头 `session.header.agentPreset`（由 session-controller 的 `composeAgent` 写入**解析后**的 id，含未显式指定时的部署默认）∪ `agent-preset/selected` 事件（仅空会话可切；由 `session/event` 监听存入 `state.presetBySession`）。二者合起来等价于宿主的 `agentPreset` 会话投影（init=header，apply=该事件），故**无需注入 `sessionProjections` 服务**。判据缺失一律 **fail-open**（视为不静默）——绝不能因识别不到预设而丢记忆。
+
+三个机制约束：① `enabled` / `silentPresets` 都是热配置，`apply()` 同步段读不到 → **不能条件注册**（否则切回后工具从未注册，同 v1.6.0 hybrid 踩坑）；② `tools.restrict()` 要求 agent 作用域 ctx、静态名单、dispose 才解除，故只能挂 `agent/created`（并由 `agent/disposed` 释放）；③ 掩码在 agent 创建时按该会话预设戴上（同 model selection 的「装配前冻结」语义）——运行中热切配置只影响后续新建 agent，但**同一会话内切换预设**（仅空会话允许）会经 `agent-preset/selected` 立即重算掩码，因为此时模型还没看过任何内容，能力集必须与新预设一致；残留 schema 由 execute 内的 `enabled` 兜底保证功能仍停用。deny 名单不含子 agent 内部工具 `log_read_section` / `log_write_ops`（它们经 `ctx.llm.stream` 的 tools 参数传入、不入全局层，列入会命中 unknown-tool 抛错）。
+
 投影的完整生命周期（会话首注入、内容变更不重注、compaction 后重注）见下图：
 
 ![记忆投影生命周期（含 compaction 重注）](./assets/projection-lifecycle.svg)

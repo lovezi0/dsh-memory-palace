@@ -6,6 +6,7 @@ import { name, apply, Config, inject } from "../lib/index.js";
 import { createPaths } from "../lib/common/paths.mjs";
 import { createRecords, readNumberedMemory, applyMemoryOp } from "../lib/common/records.mjs";
 import { createDistill } from "../lib/distill.mjs";
+import { buildProjections } from "../lib/projection.mjs";
 import { classifyFailure, backoffDelayMs, runWithRetry, RETRY_CONSTANTS } from "../lib/common/retry.mjs";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -1210,6 +1211,123 @@ console.log("[F] FEEDBACK existing memory into distill");
     const daily = readFileSync(dailyPath, "utf8");
     assert(!daily.includes("需要的话") && !daily.includes("But wait"), "[F3] raw LLM text NOT written to daily log (anti-pollution)");
     assert(daily.includes("已跳过原文落盘") || daily.includes("未返回可解析的结构化摘要"), "[F3] placeholder written instead of raw text");
+  }
+}
+
+// ---------- 场景 M：v1.7.2 预设级静默（官方 minimal「裸测环境」口径） ----------
+// 背景：宿主把「模式」做成 agent 平面 preset，而本插件注册在 host 平面 —— 各通道对每个 agent 都生效，
+// preset 不会把它摘掉（complete 只吞 sections、不裁 tools）。故必须按会话预设自行整体静默。
+// 判据：session.header.agentPreset（创建头，含部署默认）+ agent-preset/selected 事件。
+console.log("[M] SILENT PRESETS (minimal) → section / projection / tools / writes all off");
+{
+  const minimalSession = { id: "s-min", header: { cwd: "/tmp", agentPreset: "minimal" } };
+  const standardSession = { id: "s-std", header: { cwd: "/tmp", agentPreset: "standard" } };
+
+  // M1: section 通道按会话门控；判据缺失一律 fail-open（记忆能力不能因判据缺失而丢）
+  {
+    const { captured } = await loadPlugin();
+    const sec = captured.sections[0];
+    assert(sec.text({ agent: { session: minimalSession } }) === "", "[M1] minimal preset → section text empty");
+    assert(sec.text({ agent: { session: standardSession } }).length > 0, "[M1] standard preset → section text intact");
+    assert(sec.text().length > 0, "[M1] no context → fail-open, section intact");
+    assert(sec.text({ agent: { session: { id: "s-none", header: { cwd: "/tmp" } } } }).length > 0, "[M1] header without agentPreset → not silent");
+  }
+
+  // M2: 空会话切换预设（agent-preset/selected 事件）后同样静默
+  {
+    const { captured } = await loadPlugin();
+    const s = fakeSession(mkdtempSync(join(tmpdir(), "mem-m2-")));
+    assert(captured.sections[0].text({ agent: { session: s } }).length > 0, "[M2] before switch → not silent");
+    fire(s, captured, "agent-preset/selected", { agentPreset: "minimal" });
+    assert(captured.sections[0].text({ agent: { session: s } }) === "", "[M2] after switch to minimal → silent");
+  }
+
+  // M3: silentPresets=[] → 机制关闭（只受 enabled 管）
+  {
+    const { captured } = await loadPlugin({ silentPresets: [] });
+    assert(captured.sections[0].text({ agent: { session: minimalSession } }).length > 0, "[M3] empty list → mechanism off");
+  }
+
+  // M4: agent/created → 仅静默会话 deny 全部记忆工具
+  {
+    const { captured } = await loadPlugin();
+    const onCreated = (captured.listeners["agent/created"] || [])[0];
+    assert(typeof onCreated === "function", "[M4] agent/created listener registered");
+    const denied = [];
+    const mkAgent = (header) => ({
+      session: { id: "s-" + JSON.stringify(header), header: { cwd: "/tmp", ...header } },
+      ctx: { tools: { restrict: (f) => { denied.push(f); return () => {}; } } },
+    });
+    onCreated({ agent: mkAgent({ agentPreset: "minimal" }) });
+    assert(denied.length === 1, "[M4] minimal → tools.restrict called");
+    assert(
+      denied[0].deny.join(",") === "memory_note,memory_note_user,memory_read,memory_delete,memory_write,memory_update_section,memory_reorganize",
+      "[M4] deny list = 4 legacy + 3 hybrid tools",
+    );
+    onCreated({ agent: mkAgent({ agentPreset: "standard" }) });
+    assert(denied.length === 1, "[M4] standard → no restriction");
+    onCreated({ agent: mkAgent({}) });
+    assert(denied.length === 1, "[M4] preset-less session → fail-open (no restriction)");
+  }
+
+  // M5: E 投影通道 —— 静默会话不构造任何投影消息
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-m5-"));
+    const dir = join(ws, ".deepseek-harness", "memory");
+    mkdirSync(dir, { recursive: true });
+    const paths = createPaths(
+      () => ({ ...BASE, bridgeBuddyMemory: false, silentPresets: ["minimal"] }),
+      () => ws,
+    );
+    const getConfig = () => ({ ...BASE, bridgeBuddyMemory: false, silentPresets: ["minimal"] });
+    const silent = buildProjections({ getConfig, paths, session: minimalSession, isSilent: () => true });
+    assert(Array.isArray(silent) && silent.length === 0, "[M5] silent session → zero projections");
+    const proj = buildProjections({ getConfig, paths, session: standardSession, isSilent: () => false });
+    assert(Array.isArray(proj), "[M5] non-silent session → projections evaluated (array)");
+  }
+
+  // M6: 写入通道 —— minimal 会话整轮不落日志、不落 MEMORY
+  {
+    const ws = mkdtempSync(join(tmpdir(), "mem-m6-"));
+    const { captured } = await loadPlugin();
+    const s = fakeSession(ws);
+    s.header.agentPreset = "minimal";
+    fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
+    fire(s, captured, "tool/result", { content: "src/index.mjs, src/client.js" });
+    fire(s, captured, "turn/end", { reason: { kind: "error", message: "boom: hidden" } });
+    await sleep(1800);
+    assert(!existsSync(dailyFile(ws)), "[M6] minimal session → no daily log written");
+    assert(
+      !existsSync(join(ws, ".deepseek-harness", "MEMORY.md")),
+      "[M6] minimal session → no MEMORY.md written (error capture also skipped)",
+    );
+  }
+
+  // M7: 空会话切换预设 → 掩码跟随（切进静默预设戴上、切回摘下、重复切换幂等、disposed 释放）
+  {
+    const { captured } = await loadPlugin();
+    const s = fakeSession(mkdtempSync(join(tmpdir(), "mem-m7-")));
+    s.header.agentPreset = "standard";
+    let masks = 0;
+    let lifted = 0;
+    const agent = {
+      session: s,
+      ctx: { tools: { restrict: () => { masks += 1; return () => { lifted += 1; }; } } },
+    };
+    const onCreated = (captured.listeners["agent/created"] || [])[0];
+    onCreated({ agent });
+    assert(masks === 0, "[M7] standard at creation → no mask");
+    fire(s, captured, "agent-preset/selected", { agentPreset: "minimal" });
+    assert(masks === 1, "[M7] switch into minimal → mask applied");
+    fire(s, captured, "agent-preset/selected", { agentPreset: "minimal" });
+    assert(masks === 1, "[M7] same preset again → idempotent (no double mask)");
+    fire(s, captured, "agent-preset/selected", { agentPreset: "standard" });
+    assert(lifted === 1 && masks === 1, "[M7] switch back → mask lifted");
+    const onDisposed = (captured.listeners["agent/disposed"] || [])[0];
+    assert(typeof onDisposed === "function", "[M7] agent/disposed listener registered");
+    fire(s, captured, "agent-preset/selected", { agentPreset: "minimal" });
+    onDisposed({ agent });
+    assert(lifted === 2, "[M7] agent disposed → mask released + bookkeeping cleared");
   }
 }
 

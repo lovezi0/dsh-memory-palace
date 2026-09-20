@@ -6,6 +6,8 @@
       return {
         bridgeBuddyMemory: v.bridgeBuddyMemory === false ? "false" : "true",
         buddyWorkspaceMemoryDirs: Array.isArray(v.buddyWorkspaceMemoryDirs) ? v.buddyWorkspaceMemoryDirs.join(", ") : ".workbuddy/memory, .codebuddy/memory",
+        // v1.7.2：静默预设名单（数组 ↔ 逗号串，与 buddyWorkspaceMemoryDirs 同款约定）
+        silentPresets: Array.isArray(v.silentPresets) ? v.silentPresets.join(", ") : "minimal",
         userMemoryPath: v.userMemoryPath || "~/.deepseek-harness/MEMORY.md",
         workspaceMemoryDir: v.workspaceMemoryDir || ".deepseek-harness/memory",
         dailyLogRetentionDays: v.dailyLogRetentionDays != null ? String(v.dailyLogRetentionDays) : "30",

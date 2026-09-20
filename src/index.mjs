@@ -42,6 +42,11 @@ const MEMORY_PALACE_SETTINGS_NAMESPACE = "memory-palace";
 
 export const Config = Schema.object({
   enabled: Schema.boolean().default(true).description("启用 memory-palace 记忆注入与每日日志写入。"),
+  // ---- v1.7.2：预设级静默（官方 minimal「裸测环境」口径）----
+  // 宿主把「模式」实现为 agent 平面的 preset：minimal 预设用 persona complete:true 独占 system prompt。
+  // 但本插件注册在 host 平面（profile bundle 的 insert），各通道对**每个 agent** 都生效，preset 并不会
+  // 把它摘掉——故须自行按会话判据静默，否则记忆正文仍会经 E 投影进历史（实测症状）。
+  silentPresets: Schema.array(Schema.string()).default(["minimal"]).description("在这些 agent 预设下本插件整体静默（等价 enabled=false）：不注入系统提示词与投影、记忆工具对模型隐身、不写日志、不跑记忆子代理。默认 [\"minimal\"]（官方极简模式）；置空数组 = 关闭该机制。判据取会话创建头 agentPreset 与 agent-preset/selected 事件（宿主公开事实）。"),
   userMemoryPath: Schema.string().default("~/.deepseek-harness/MEMORY.md").description("用户级记忆文件路径（支持 ~ 展开）。"),
   workspaceMemoryDir: Schema.string().default(".deepseek-harness/memory").description("无 buddy 目录时使用的项目级每日日志目录；项目级 MEMORY.md 位于其同级（.deepseek-harness/MEMORY.md）。"),
   dailyLogRetentionDays: Schema.number().default(30).description("每日日志保留天数，过期日志会被蒸馏进 MEMORY.md。"),
@@ -128,6 +133,9 @@ export function apply(ctx, config) {
     lastSummarizedSeq: -1,    // 智能模式增量摘要断点（session 事件 seq）
     summarySessionId: null,
     planModeActive: false,    // 计划模式：禁写记忆（硬编码默认，无开关；仅经 session/event 的 plan/mode 翻转；未装 dsh-plan-mode 永不触发=不拦截）
+    // v1.7.2：会话 → agent 预设 id（仅"切换预设"事件写入；创建头另在 presetOfSession 里兜底读）。
+    // 只增不减：会话结束后残留几条字符串，代价可忽略；切回同一 session 断言预设不变（宿主侧保证）。
+    presetBySession: new Map(),
     // v1.7.0：injectedSessionIds 已删除——记忆正文改经 E 投影（src/projection.mjs）注入为
     // 常驻消息，compaction 后由投影自动重注，不再需要"仅首次注入"的会话级标记。
   };
@@ -136,6 +144,45 @@ export function apply(ctx, config) {
   // 溢出保护清空 tool 块 → 闸门误判 → 记忆整体丢失）。
   const TURN_BUFFER_CHAR_CAP = 30000;
   const SETTLE_DELAY = 1500;
+
+  // ---------- v1.7.2：预设级静默判据（官方 minimal = 宿主给模型的"裸测环境"） ----------
+  // 背景：宿主的「模式」= agent 平面的 preset（`packages/preset/agent-presets/presets/*/agent.cordis.yml`），
+  // minimal 预设以 persona `complete: true` 独占 system prompt 并关掉 runtime context——那是官方跑分口径
+  // 的刻意设计。而本插件是 host 平面插件（profile bundle insert），其 systemPrompt.section / agent/pre-step
+  // 投影 / 工具注册对**每个 agent** 都生效，preset 不会把它摘掉；`complete` 又只吞 sections、不裁 tools。
+  // 结果就是"指令没了、记忆正文照进、工具 schema 照发"的半残状态（实测：极简模式下投影仍在注入）。
+  // 因此必须自行判定会话预设并整体静默。
+  //
+  // 判据取宿主公开事实，不引入额外服务依赖：
+  //   ① session.header.agentPreset —— 创建头，由 session-controller 的 composeAgent 写入**解析后**的
+  //      预设 id（未显式指定时即部署默认），故默认预设会话同样能识别；
+  //   ② `agent-preset/selected` 事件 —— 仅"尚未产生任何消息"的空会话可切预设，切换时追加，
+  //      由下方 session/event 监听捕获。
+  // 二者合起来等价于宿主的 `agentPreset` 会话投影（init=header，apply=该事件），无需注入 sessionProjections。
+  // fail-open：判据缺失（老宿主 / 非 preset 部署）一律视为"不静默"，绝不因判据缺失而丢掉记忆能力。
+  function presetOfSession(session) {
+    if (!session) return undefined;
+    const switched = state.presetBySession.get(session.id);
+    if (typeof switched === "string" && switched) return switched;
+    const header = session.header?.agentPreset;
+    return typeof header === "string" && header ? header : undefined;
+  }
+
+  /**
+   * 该会话是否应整体静默：`enabled=false`（全局停用）或命中「静默预设」名单。
+   * 命中后 section / E 投影 / turn-end 写入 / 记忆工具 / hybrid 子代理一并关闭——
+   * 语义等价于该会话里没装本插件。
+   * @param {object|undefined} session
+   * @returns {boolean}
+   */
+  function isSessionSilent(session) {
+    const cfg = source();
+    if (!cfg.enabled) return true;
+    const list = Array.isArray(cfg.silentPresets) ? cfg.silentPresets.filter((x) => typeof x === "string" && x) : [];
+    if (!list.length) return false; // 名单空 = 关闭该机制（只受 enabled 管）
+    const preset = presetOfSession(session);
+    return preset !== undefined && list.includes(preset);
+  }
 
   // ---- 装配：路径解析 / 记录读写 / 蒸馏 / 工具 / route ----
   const paths = createPaths(() => source(), () => state.activeCwd);
@@ -152,8 +199,75 @@ export function apply(ctx, config) {
   // 的 prompt 不引导使用，guards 白名单只拦 hybrid 工具）。
   const hybrid = registerHybrid({ ctx, getConfig: () => source(), paths, records, state });
   // v1.7.0 特性1：E 投影通道（记忆正文常驻注入）。与 hybrid 同理，无条件注册——
-  // 其内部读热配置，无副作用（enabled=false 时 buildProjections 返回空）。
-  registerProjection({ ctx, getConfig: () => source(), paths });
+  // 其内部读热配置，无副作用（enabled=false 或命中静默预设时 buildProjections 返回空）。
+  // v1.7.2：把 isSessionSilent 透传下去——投影按**会话**判定，故必须知道 agent 所属会话的预设。
+  registerProjection({ ctx, getConfig: () => source(), paths, isSilent: isSessionSilent });
+
+  // ---------- v1.7.2：静默会话（enabled=false 或命中静默预设）的工具 schema 隐身 ----------
+  // 背景：`complete: true` 只收缩 sections、**不裁剪 tools**——记忆工具的 schema 仍会经 toolProvider
+  // 进 assemble，在"裸测环境"里白吃 token 且可能被模型幻觉调用。故静默会话需显式隐身工具。
+  // 机制约束：① enabled / silentPresets 都是热配置，apply() 同步段读不到 → 不能条件注册（否则切回后
+  //   工具从未注册，同 v1.6.0 hybrid 踩坑）；② tools.restrict() 要求 agent 作用域 ctx、静态名单、
+  //   dispose 才解除；③ 宿主无"当前是哪个 preset"的装配期 API，但 agent/created 时 session 创建头已带
+  //   agentPreset（composeAgent 写入解析后的 id），故此处判定可靠。
+  // 落法：挂 agent/created 建立掩码，并在**空会话切换预设**时同步（宿主允许"尚未产生任何消息"的会话
+  //   改预设；此时模型还没看过任何东西，掩码必须跟着变，否则切到极简后工具仍暴露）。
+  // 语义与 model selection 一致（能力集在 agent 装配前冻结）：运行中热切 enabled / silentPresets
+  // 仅影响后续新建 agent，当前 agent 不变——可接受（execute 内已有 enabled 兜底，即便残留 schema 被调
+  // 也返回 disabled）。
+  // deny 名单含 4 基础工具 + 3 hybrid 工具；log_read_section / log_write_ops 是子 agent 内部工具
+  // （经 ctx.llm.stream 的 tools 参数、不入全局层），列进 deny 会触发 unknown-tool 抛错，故不含。
+  const MEMORY_TOOL_NAMES = [
+    "memory_note",
+    "memory_note_user",
+    "memory_read",
+    "memory_delete",
+    "memory_write",
+    "memory_update_section",
+    "memory_reorganize",
+  ];
+  // sessionId → agent（仅用于切换预设时重新同步掩码；agent/disposed 时清理，避免长跑进程里越积越多）
+  const agentBySession = new Map();
+  // sessionId → restrict() 的解除函数（掩码是否已戴，靠它判断 + 反向解除）
+  const toolMaskBySession = new Map();
+
+  /** 按会话当前预设同步工具掩码：静默→戴上（deny 全部记忆工具），非静默→摘下。幂等。 */
+  function syncToolMask(agent) {
+    const sessionId = agent?.session?.id;
+    if (!sessionId) return;
+    const masked = toolMaskBySession.has(sessionId);
+    const silent = isSessionSilent(agent?.session);
+    if (silent === masked) return;
+    try {
+      if (silent) {
+        const release = agent?.ctx?.tools?.restrict({ deny: MEMORY_TOOL_NAMES });
+        if (typeof release === "function") toolMaskBySession.set(sessionId, release);
+      } else {
+        toolMaskBySession.get(sessionId)?.();
+        toolMaskBySession.delete(sessionId);
+      }
+    } catch (error) {
+      // 绝不冒泡：restrict 抛错（如某工具因异常未注册命中 unknown-tool）时降级为"不隐身"，
+      // 由 execute 的 enabled 兜底保证功能仍停用，只是没省掉 schema token。
+      console.error(`[memory-palace] tool-hide skipped: ${error?.message || String(error)}`);
+    }
+  }
+
+  ctx.on("agent/created", ({ agent }) => {
+    if (agent?.session?.id) agentBySession.set(agent.session.id, agent);
+    syncToolMask(agent);
+  });
+  ctx.on("agent/disposed", ({ agent }) => {
+    const sessionId = agent?.session?.id;
+    if (!sessionId) return;
+    try {
+      toolMaskBySession.get(sessionId)?.();
+    } catch {
+      /* scope 已在卸载，忽略 */
+    }
+    toolMaskBySession.delete(sessionId);
+    agentBySession.delete(sessionId);
+  });
 
   // ---- session/event 跟踪：更新 activeCwd/activeSession/增量断点 + 累积 turnBuffer ----
   // 关键：一次用户请求在 dsh agent 循环里会被拆成多个 turn（每个工具调用一轮），
@@ -169,6 +283,16 @@ export function apply(ctx, config) {
       state.lastSummarizedSeq = session.firstLiveSeq;
     }
     const type = event?.type;
+    // v1.7.2：预设切换（仅空会话可切；宿主在切换提交后追加该事件）。记进 Map 供 isSessionSilent 读取。
+    if (type === "agent-preset/selected") {
+      const id = event?.data?.agentPreset;
+      if (session?.id && typeof id === "string" && id) state.presetBySession.set(session.id, id);
+      // 掩码跟随：会话切进/切出静默预设时立即戴上或摘下（此时模型尚未看过任何内容，
+      // 不做这一步会出现"切到极简、工具 schema 仍暴露"的漏网）。
+      const owner = session?.id ? agentBySession.get(session.id) : undefined;
+      if (owner) syncToolMask(owner);
+      return;
+    }
     // 计划模式：禁写记忆（硬编码默认行为，无开关；不依赖 dsh-plan-mode 服务，未装则永不触发=安全降级=不拦截）
     if (type === "plan/mode") {
       state.planModeActive = !!(event?.data?.active);
@@ -223,9 +347,15 @@ export function apply(ctx, config) {
   ctx.systemPrompt.section({
     name: "memory-palace",
     order: 50,
-    text: () => {
+    // v1.7.2：text 接收宿主 AssembleContext（`{ agent, scope, signal }`，见 agent 包 assembleContextFor），
+    // 故可按**会话**判定预设静默 —— 与投影/工具/写入同一判据，避免"half-injected"状态。
+    text: (context) => {
       const cfg = source();
       if (!cfg.enabled) return "";
+      // v1.7.2：极简（裸测）预设整体静默。注：minimal 预设的 complete:true 本来也会吞掉本节，
+      // 这里显式返回空串是为了① 覆盖"自定义静默预设未用 complete"的情形；② 让本节的去留与其余
+      // 通道严格一致，便于排障（不会出现"投影关了、section 还在"的错觉）。
+      if (isSessionSilent(context?.agent?.session)) return "";
       // v1.7.0：alreadyInjected / injectedSessionIds 已整体删除（记忆正文改走 E 投影）。
       // intro（含记忆公民指令）仍【始终】注入——若因记忆为空而整体返回空串，agent 将不知道
       // 记忆系统存在、不会主动记，形成「无记忆 → 无指令 → 永不记」死循环。
@@ -278,6 +408,9 @@ export function apply(ctx, config) {
     if (state.planModeActive) return;
     const cfg = source();
     if (!cfg.enabled) return;
+    // v1.7.2：静默会话（极简等预设）不写任何记忆——错误捕获 / 轻量兜底 / smart 摘要 / hybrid 子代理
+    // 全部在此一处提前返回（hybrid 分支在其下方，天然被拦）。
+    if (isSessionSilent(state.activeSession)) return;
     const dirs = paths.writeDirs();
     if (!dirs.length) return;
 

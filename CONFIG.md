@@ -8,6 +8,9 @@
 |---|---|---|---|
 | 桥接 Buddy 记忆 | `bridgeBuddyMemory` | `true` | 检测并直接读写 WorkBuddy / CodeBuddy 项目记忆目录 |
 | Buddy 记忆目录列表 | `buddyWorkspaceMemoryDirs` | `[".workbuddy/memory", ".codebuddy/memory"]` | 要桥接的 buddy 目录列表（按优先级，已存在的全部同步写入） |
+| 静默预设 | `silentPresets` | `["minimal"]` | 这些 agent 预设下本插件**整体隐身**：不注入提示词与记忆投影、记忆工具不对模型暴露、不写日志、不跑记忆子代理。逗号分隔；留空＝关闭该机制 |
+
+> **静默预设（v1.7.2）**：宿主的「模式」= agent 平面预设，官方 minimal（极简模式）以 persona `complete: true` 独占系统提示词，是给模型留白的「裸测环境」（跑分口径）。本插件注册在 host 平面，通道对每个会话都生效，故需按会话判据自行静默。判据 = 会话创建头 `agentPreset`（未显式指定时为部署默认）+ 预设切换事件；命中后连 7 个记忆工具的 **schema 也从模型可见集中移除**（零 token 足迹）。判据缺失一律 fail-open（不静默）。
 
 > **桥接规则**：`bridgeBuddyMemory` 开启时，**读取**恒含 dsh 原生目录，并叠加所有已存在的 buddy 目录（顺序 `.deepseek-harness` > `.workbuddy` > `.codebuddy`）；**写入**优先 buddy 目录，都不存在时才回退 dsh 目录。buddy 目录绝不被主动创建。
 
