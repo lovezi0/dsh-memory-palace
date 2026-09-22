@@ -2,20 +2,19 @@
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.6-alpha.2](https://img.shields.io/badge/DeepSeek%20Harness-0.1.6--alpha.2-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.7-alpha.1](https://img.shields.io/badge/DeepSeek%20Harness-0.1.7--alpha.1-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
 ## 特性
 
 - **人类可读的真源**：记忆以纯 Markdown 存储，任何编辑器都能直接修改，数据始终属于你。
 - **双层记忆**：用户级（跨项目个人偏好）+ 工作区级（项目约定），互不干扰。
-- **日志自动沉淀**：超过保留期的每日日志自动并入长期记忆，结论不丢。
 - **WorkBuddy / CodeBuddy 桥接**：项目已有对应记忆目录时直接读写，无需重复维护。
 - **记忆工具**：AI 可主动写入、聚合读取、按内容删除（删除需人工确认），写入自带去重。
 - **手动蒸馏**：会话标题栏一键把当前对话或项目记忆提炼成长期记忆。
 - **设置页集成**：全部配置均可在 DSH 设置面板中图形化调整（按板块折叠），无需改配置文件。
 - **自定义指令**：不适合写进记忆的特殊指令可在设置页配置，插件经系统提示词注入。
-- **主动记忆（插件模式）**：以指令引导 AI 在完成任务、修复问题、确定决策、获知偏好时主动落档。
-- **智能模式**：由模型自动提炼每轮新增内容，摘要进日志、长期事实进记忆。
+- **主动记忆（插件模式）**：以指令引导 AI 在完成任务、修复问题、确定决策、获知偏好时主动落档。*即将移除*
+- **智能模式**：由模型自动提炼每轮新增内容，摘要进日志、长期事实进记忆。*即将移除*
 - **记忆注入**：长期记忆与今日日志以「会话起始快照」常驻上下文、按文件身份各只注入一次 —— 既保证每个步骤都可见，又不破坏前缀缓存、不堆积冗余快照。
 - **混合模式（🔥推荐）**：子代理每轮自动整理日志并去重，长期记忆由主 AI 主动维护，兼顾自动化与可控性。
 - **标准插件包**：经官方插件机制一键安装，无需改动 harness。
@@ -46,8 +45,6 @@
 ② 对话历史投影（易变）：用户级 + 项目级长期记忆、今日日志——按文件身份各注入一次，压缩后自动重注最新版
 ```
 
-> **极简模式（静默预设）**：宿主的「模式」= agent 平面预设（`presets/*/agent.cordis.yml`），官方 minimal 用 persona `complete: true` 独占系统提示词，是刻意留白的「裸测环境」（跑分口径）。但本插件注册在 host 平面，各通道对**每个会话**都生效（`complete` 只吞 system 提示词、**不裁工具**），所以必须按会话自行静默。默认 `silentPresets = ["minimal"]` 已覆盖官方极简模式：命中预设的会话里，系统提示词、记忆投影、7 个记忆工具（**schema 一并隐身，零 token 足迹**）、turn-end 自动写入与 hybrid 记忆子代理**全部关闭**，语义等价于该会话没装本插件，不留半注入状态。判据取会话创建头 `agentPreset`（含未显式指定时的部署默认）与预设切换事件；判据缺失一律 fail-open（不静默），不会因识别不到而丢记忆。要静默其它预设，在设置页「静默预设」里加 id（逗号分隔）。
-
 **写入（每轮结束）**——经「防闲聊闸门」判定后异步追加：
 
 ```
@@ -74,13 +71,13 @@
 
 ## 安装
 
-前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。插件声明的 **dsh 下限为 `0.1.5-rc.1`**（写进 `peerDependencies` 门禁，低于此版本装载期即挡），**已核验至 `0.1.6-alpha.2`**（契约 1–12 与插件占用的宿主面全部通过）。
+前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。
 
 方式一：直接通过 GitHub 安装（推荐，`lib/` 构建产物已随仓库分发，装即用）
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.7.2-alpha.1
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.7.2-alpha.2
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -122,6 +119,10 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.7.2**
+    - **1.7.2-alpha.2**
+        - 💪适配deepseek harness 0.1.7-alpha.1
+        - 💪add memory plugin icon
+        - 💪记忆模式默认为[混合模式] *未来的版本将移除插件模式&智能模式*
     - **1.7.2-alpha.1**
         - 💪dsh Agent 预设[极简模式]时禁用记忆注入、记忆生成、记忆工具
 - **1.7.1**

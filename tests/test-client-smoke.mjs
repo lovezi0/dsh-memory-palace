@@ -170,4 +170,16 @@ const enKeys = Object.keys(localeDict.en).sort().join(",");
 if (zhKeys !== enKeys) throw new Error("FAIL: zh/en locale key sets differ");
 console.log("locale keys:", Object.keys(localeDict.zh).length, "| zh ≡ en");
 
+// ---- v1.7.2：客户端默认记忆模式回退必须与 schema 默认对齐（hybrid）----
+// ⚠️ 不走渲染断言：memoryMode 下拉位于「智能摘要」卡 body 内，而卡片默认全部收起
+// （上方已断言 open bodies = 0），且 stub 的 useState 是 no-op、无法模拟点击展开。
+// 故退化为源码级断言，锁定 projectDraft 的回退值。
+if (!src.includes('memoryMode: v.memoryMode || "hybrid"')) {
+  throw new Error('FAIL: projectDraft fallback for memoryMode must be "hybrid"');
+}
+if (!src.includes('? draft.memoryMode : "hybrid"')) {
+  throw new Error('FAIL: memory-mode select fallback must be "hybrid"');
+}
+console.log("default memory mode fallback = hybrid (source-level)");
+
 console.log("SMOKE OK");

@@ -176,7 +176,9 @@ section("② 记忆子 agent 循环（mock LLM）");
     assert.ok(content.includes("## 渠道排查"), "应写入章节");
     assert.ok(content.includes("- 渠道映射未生效根因"), "应写入条目");
     const secondMsg = calls[1];
-    assert.ok(secondMsg.some((m) => m.role === "user" && m.content?.some((b) => b.type === "tool-result")), "第二轮应回喂 tool-result");
+    // v1.8.0（dsh 0.1.7）：createToolResultMessage 从「user 消息装 tool-result 块」改为独立 role=tool 消息（content 为结果块本身）。
+    // 判据放宽为两版宿主通用：role=tool 或 user 消息内含 tool-result 块。
+    assert.ok(secondMsg.some((m) => m.role === "tool" || (m.role === "user" && m.content?.some((b) => b.type === "tool-result"))), "第二轮应回喂 tool-result");
     ok("场景B：tool-calls 多轮 + 日志落盘 + tool-result 回喂");
     rmSync(join(logDir, `${today}.md`), { force: true });
   }

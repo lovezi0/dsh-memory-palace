@@ -211,6 +211,16 @@ assert(inject.includes("llm"), "[1] inject includes 'llm' (smart mode needs it)"
 const text = main.captured.sections[0].text();
 assert(typeof text === "string", "[2] section.text() returns string");
 
+// ---------- [1c] v1.7.2：默认记忆模式 = hybrid ----------
+console.log("[1c] DEFAULT MEMORY MODE");
+{
+  const { default: Schema } = await import("@deepseek-ai/schemastery");
+  const [resolved] = Schema.resolve({}, Config);
+  const raw = resolved.memoryMode;
+  const value = raw && typeof raw.get === "function" ? raw.get() : raw;
+  assert(value === "hybrid", "[1c] 空配置解析后 memoryMode 默认 = hybrid（v1.7.2 起）");
+}
+
 // ---------- [1b] v1.7.1 特性3：自定义指令注入（section 内、位于记忆指令之后） ----------
 console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
 {

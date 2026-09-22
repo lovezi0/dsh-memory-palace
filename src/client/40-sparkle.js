@@ -1,5 +1,6 @@
     // ---- v1.2.0 会话标题栏「记忆」按钮（蒸馏入口）----
-    // sparkle-twinkle.svg 内联（assets/ 不在 package.json files 数组、不随 npm 分发，不能按路径引用）。
+    // sparkle-twinkle.svg 内联（client 侧只能 require("react")、不能按包内路径取资源；该文件也不在
+    // package.json files 数组内，不随 npm 分发——files 里只多列了 assets/memory-icon.svg 供宿主插件面板读取）。
     // 类名/渐变 id 加 mpd- 前缀防全局冲突；twinkle 动画 keyframes 由注入的样式表提供。
     const SPARKLE_SVG =
       '<svg width="14" height="14" viewBox="0 0 11 10" fill="none" xmlns="http://www.w3.org/2000/svg">' +
@@ -21,6 +22,30 @@
         ".mpd-star-big{animation:mpd-tw1 2s ease-in-out infinite}",
         ".mpd-star-small{animation:mpd-tw2 1.5s ease-in-out infinite .5s}",
         ".mpd-item:hover{background:var(--dsw-alias-interactive-bg-hover,#f2f3f5)}"
+      ].join("");
+      document.head.appendChild(style);
+    }
+
+    // ---- v1.8.0 设置面板 nav 图标（「记忆」条目）----
+    // 宿主 SettingsRoot.navIcon(id) 是**硬编码白名单**（account/models/agent-presets/plugins/archived-sessions），
+    // 未列出的第三方 section 一律回退齿轮图标，且 slots 契约（id/order/label）没开 nav 图标位、
+    // 官方文档亦无「从 manifest 取 nav 图标」的机制（manifest icon 只进插件管理面板的卡片/行）。
+    // 故在插件边界内绕行两步：
+    //   ① label 返回 React 节点 —— 宿主 ui-slots 的 resolveSlotLabel 是 `typeof label === 'function' ? label() : label`
+    //      （原样返回、不做字符串强转），SettingsRoot 直接把它当 children 渲染，节点可行；
+    //   ② 注入 CSS 用 :has() 命中「含本星标的 nav 按钮」，隐藏其**直接子 svg**（即宿主齿轮；星标在 label span 内部，不在命中面）。
+    // 失效面：宿主若改结构/去掉 :has 支持 → 退化为「齿轮 + 星标」并排，不报错、不影响功能（有意选的可降级方案）。
+    function ensureNavStarStyles() {
+      if (typeof document === "undefined") return; // 非浏览器环境（单测/构建期）静默跳过
+      injectDistillStyles(); // 星标动画 keyframes 与蒸馏按钮共用同一份样式表
+      if (document.getElementById("memory-palace-nav-star-styles")) return;
+      const style = document.createElement("style");
+      style.id = "memory-palace-nav-star-styles";
+      style.textContent = [
+        // 星标容器：与宿主 navIcon 同尺寸（16px）、紧贴文字前。
+        ".mp-nav-star{display:inline-flex;flex:none;align-items:center;margin-right:8px;line-height:0}",
+        ".mp-nav-star svg{display:block;width:16px;height:16px}",
+        "button:has(.mp-nav-star)>svg{display:none!important}"
       ].join("");
       document.head.appendChild(style);
     }

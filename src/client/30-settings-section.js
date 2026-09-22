@@ -451,7 +451,7 @@
                 ? t("memoryModeHintHybrid")
                 : t("memoryModeHintPlugin"),
             h("select", {
-              value: ["plugin", "smart", "hybrid"].includes(draft.memoryMode) ? draft.memoryMode : "plugin",
+              value: ["plugin", "smart", "hybrid"].includes(draft.memoryMode) ? draft.memoryMode : "hybrid",
               disabled,
               onChange: (e) => edit("memoryMode", e.target.value),
               style: selectStyle
@@ -477,7 +477,7 @@
             row(t("summaryModelLabel"), t("summaryModelHint"),
               h("select", {
                 // 已存储值不在下拉选项内（如旧版双前缀脏数据）→ 归零为「复用当前会话模型」，
-                // 避免 select 显示悬空值、保存时又把脏值写回 settings.yaml。
+                // 避免 select 显示悬空值、保存时又把脏值写回 profile 条目 config。
                 value: modelOptions.some((o) => o.value === draft.summaryModel) ? draft.summaryModel : "",
                 disabled,
                 style: selectStyle,

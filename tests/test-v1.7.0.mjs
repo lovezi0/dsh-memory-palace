@@ -230,14 +230,14 @@ console.log("\n[特性1] buildProjections");
     return buildProjections({ getConfig: () => cfg, paths });
   };
 
-  check("source 标注为 kind=plugin / plugin=dsh-memory-palace / form=instructions", () => {
+  check("source 标注为 kind=plugin:dsh-memory-palace / form=instructions（v1.8.0 合规形状）", () => {
     setup();
     const msgs = build(TMP);
     assert.ok(msgs.length > 0);
     for (const m of msgs) {
       assert.equal(m.role, "user");
-      assert.equal(m.source.kind, "plugin");
-      assert.equal(m.source.plugin, "dsh-memory-palace");
+      assert.equal(m.source.kind, "plugin:dsh-memory-palace");
+      assert.equal(m.source.plugin, undefined);
       assert.equal(m.source.form, "instructions");
     }
   });
@@ -308,13 +308,13 @@ console.log("\n[特性1] registerProjection 钩子");
     const claimed = [{ content: [{ type: "text", text: "提问" }], source: { kind: "user" } }];
     const runtime = { content: [{ type: "text", text: "runtime" }], source: { kind: "plugin", plugin: "x" } };
     const out = await run(listener, { session: mkSession() }, claimed, { kind: "enter", messages: [...claimed, runtime] });
-    const idx = out.messages.findIndex((m) => m.source?.plugin === "dsh-memory-palace");
+    const idx = out.messages.findIndex((m) => m.source?.kind === "plugin:dsh-memory-palace");
     assert.equal(idx, 1, `期望 idx=1，实际 ${idx}`);
   });
 
   await checkAsync("v1.7.1 判据=文件身份：同 heading 但正文不同 → 仍不重注", async () => {
     const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
-    const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
+    const proj = first.messages.find((m) => m.source?.kind === "plugin:dsh-memory-palace");
     const heading = proj.content[0].text.split("\n")[0];
     // 伪造同身份的旧投影（模拟「agent 之后又往同一个文件里写了内容」）
     const stale = { ...proj, content: [{ type: "text", text: `${heading}\n- 旧版正文，与当前磁盘内容毫无重叠` }] };
@@ -324,7 +324,7 @@ console.log("\n[特性1] registerProjection 钩子");
 
   await checkAsync("surface 已有同 heading → 不重注", async () => {
     const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
-    const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
+    const proj = first.messages.find((m) => m.source?.kind === "plugin:dsh-memory-palace");
     const session = mkSession([10], () => ({ type: "user/message", data: proj }));
     const out = await run(listener, { session }, [], { kind: "enter", messages: [] });
     assert.equal(out.messages.length, 0);
@@ -332,16 +332,24 @@ console.log("\n[特性1] registerProjection 钩子");
 
   await checkAsync("surface 身份不同（另一路径）→ 视为新对象，重注", async () => {
     const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
-    const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
+    const proj = first.messages.find((m) => m.source?.kind === "plugin:dsh-memory-palace");
     const other = { ...proj, content: [{ type: "text", text: "# 项目级记忆 (/__other__/MEMORY.md)\n- 别处的记忆" }] };
     const session = mkSession([10], () => ({ type: "user/message", data: other }));
     const out = await run(listener, { session }, [], { kind: "enter", messages: [] });
     assert.equal(out.messages.length, 1, "换身份应重注");
   });
 
+  await checkAsync("v1.8.0 向后兼容：surface 里旧形状投影（kind=plugin+plugin 字段）仍判已注入、不重注", async () => {
+    const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
+    const proj = first.messages.find((m) => m.source?.kind === "plugin:dsh-memory-palace");
+    const legacy = { ...proj, source: { kind: "plugin", plugin: "dsh-memory-palace", form: "instructions" } };
+    const out = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [legacy] });
+    assert.equal(out.messages.length, 1, "旧形状同身份应判已注入");
+  });
+
   await checkAsync("非本插件消息不参与身份比对（source 归属校验）", async () => {
     const first = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [] });
-    const proj = first.messages.find((m) => m.source?.plugin === "dsh-memory-palace");
+    const proj = first.messages.find((m) => m.source?.kind === "plugin:dsh-memory-palace");
     const imposter = { content: proj.content, source: { kind: "user" } }; // 同正文但非本插件
     const out = await run(listener, { session: mkSession() }, [], { kind: "enter", messages: [imposter] });
     assert.equal(out.messages.length, 2, "source 不属本插件时不应误判为已注入");

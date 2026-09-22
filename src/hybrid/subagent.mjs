@@ -17,7 +17,7 @@ import { HYBRID_PROACTIVE, SUBAGENT_SYSTEM } from "./prompts.mjs";
 export { HYBRID_PROACTIVE };
 
 const MAX_ROUNDS = 6; // 循环轮次上限（含首轮）；超限降级
-const MAX_RETRY = 3;  // 未知工具触发的催促重试预算（v1.6.3，人定）
+const MAX_RETRY = 3;  // 未知工具触发的催促重试预算（v1.6.3 定为 3）
 const SURFACE = new Set(["user/message", "assistant/message", "tool/result"]);
 
 // 日志文件写锁（全局 promise 链串行化）：子 agent 落盘与手动蒸馏按钮/其他写路径并发防护。
@@ -276,7 +276,7 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
           `请按系统指令处理上面的本轮对话（对话见前文消息）：判定是否有实质内容需要写入日志，并执行。${brief}`,
       },
     ],
-    source: { kind: "plugin", plugin: "memory-palace" },
+    source: { kind: "plugin:dsh-memory-palace" },
   });
 
   const tools = [
@@ -368,7 +368,7 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
               `本轮唯一可用的写入工具是 log_write_ops（ops 支持 append / new_section / mark_delete）；` +
               `需要读取章节时用 log_read_section。请立即重新提交写入。\n` +
               `若你重新判定本轮确实没有值得记录的内容，请输出一行纯文本说明后结束。` }],
-            source: { kind: "plugin", plugin: "memory-palace" },
+            source: { kind: "plugin:dsh-memory-palace" },
           }));
           dbgFail("retry after unknown tool", { retries, names });
           continue;

@@ -26,7 +26,7 @@
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 记忆模式 | `memoryMode` | `plugin` | 三种互斥模式（切换需重启 dsh 生效）：`plugin`=记忆公民指令+轮次轻量+错误捕获（默认）；`smart`=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md）；`hybrid`=记忆子代理自动维护今日日志（章节化、标删去重）+ agent 主动维护 MEMORY.md（章节化写入、整章节替换、门禁内全量重整） |
+| 记忆模式 | `memoryMode` | `hybrid` | 三种互斥模式（切换需重启 dsh 生效）：`plugin`=记忆公民指令+轮次轻量+错误捕获；`smart`=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md）；`hybrid`=记忆子代理自动维护今日日志（章节化、标删去重）+ agent 主动维护 MEMORY.md（章节化写入、整章节替换、门禁内全量重整）（**默认**） |
 | 轮次结束自动记录 | `summarize` | `true` | 插件模式下：它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。智能模式下该开关仍为总闸门 |
 | 摘要模型 | `summaryModel` | `""`（空=复用当前会话模型） | 智能模式专用：留空自动复用当前会话 provider/model；可选已配置的模型|
 | 对话出错自动记录 | `autoCaptureErrors` | `true` | 插件模式下：自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；智能模式下错误由 LLM 摘要统一提炼 |
@@ -52,7 +52,7 @@
 |---|---|---|---|
 | 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖智能模式摘要与手动蒸馏两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
 | 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。info 级别仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；配合 `distillLogLevel=debug`（见下）会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障。平时关闭 |
-| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 DSH home（`$DSH_HOME`）根目录的 settings.yaml 设置。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
+| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置（dsh 0.1.7 起 settings.yaml 已被宿主移除并一次性导入 profile）。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
 
 > **设置保存**：设置页保存**真正落盘**（写入 settings.yaml），无需改配置文件。
 >

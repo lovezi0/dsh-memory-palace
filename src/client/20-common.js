@@ -17,7 +17,7 @@
         autoCaptureErrors: v.autoCaptureErrors === false ? "false" : "true",
         distillDebugLog: v.distillDebugLog === false ? "false" : "true",
         summaryTimeoutMs: v.summaryTimeoutMs != null ? String(Math.round((Number(v.summaryTimeoutMs) || 0) / 1000)) : "60",
-        memoryMode: v.memoryMode || "plugin",
+        memoryMode: v.memoryMode || "hybrid",
         summaryModel: v.summaryModel || "",
         summaryMaxTokens: v.summaryMaxTokens != null ? String(v.summaryMaxTokens) : "2000",
         projectMaxTokens: v.projectMaxTokens != null ? String(v.projectMaxTokens) : "8000",

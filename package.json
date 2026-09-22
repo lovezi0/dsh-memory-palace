@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-palace",
-  "version": "1.7.2-alpha.1",
+  "version": "1.7.2-alpha.2",
   "description": "把 WorkBuddy 的文件式记忆系统移植进 DeepSeek Harness：用户级 + 工作区的人类可读 Markdown 记忆（~/.deepseek-harness/MEMORY.md 与 <cwd>/.deepseek-harness/memory/）。",
   "type": "module",
   "main": "lib/index.js",
@@ -13,7 +13,8 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "assets/memory-icon.svg"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
@@ -41,16 +42,17 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1",
-    "@deepseek-ai/dsh-settings": "^0.1.5-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.1.5-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.2"
+    "@deepseek-ai/dsh-llm": "^0.1.7-alpha.1",
+    "@deepseek-ai/dsh-settings": "^0.1.7-alpha.1",
+    "@deepseek-ai/dsh-tools": "^0.1.7-alpha.1",
+    "@deepseek-ai/schemastery": "^3.18.3"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-settings": "^0.1.5-rc.1"
+    "@deepseek-ai/dsh-settings": "^0.1.7-alpha.1"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
     "prepublishOnly": "npm run build"
-  }
+  },
+  "icon": "./assets/memory-icon.svg"
 }

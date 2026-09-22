@@ -35,12 +35,16 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { expandHome, toHomeShort, todayISO, readMdSync, budgetClip, stripSmartTag, stripDeletedLines } from "./common/text.mjs";
 
 // 投影消息的 source 标注。
-// - kind: 'plugin' → 明确标注"插件注入"，供下游按 source 过滤（子 agent 去噪 / turnBuffer 采集）。
+// v1.8.0（dsh 0.1.7 适配）：宿主删除了通用 catch-all `plugin` kind（MessageSourceMap 不再含
+// 'plugin' 键），改为「每个生产者在自己的模块里声明自有 kind」；v3→v4 会话持久化迁移把第三方
+// 旧源 `{kind:'plugin',plugin:X}` 规范化为 `plugin:X`（见 session-format-v3-to-v4/sources.ts
+// producerKind()）。故本插件合规 kind = 'plugin:dsh-memory-palace'。运行时不校验 kind 白名单
+// （createMessage 仅 deepFreeze(structuredClone)），但未知 kind 在 UI 走兜底呈现、且未来宿主
+// 若加校验即炸——按迁移约定写才安全。
 // - form: 'instructions' → 宿主 ContextForm 联合内的合法值（曾拟用 'memory'，但其不在该联合内，
 //   属类型不合法；'instructions' 语义接近"指令性内容"且类型安全，UI 按指令样式呈现）。
 const PROJECTION_SOURCE = Object.freeze({
-  kind: "plugin",
-  plugin: "dsh-memory-palace",
+  kind: "plugin:dsh-memory-palace",
   form: "instructions",
 });
 
@@ -54,8 +58,14 @@ function projectionIdentity(msg) {
 
 // 只在双方都是本插件投影时才比身份 —— 规避真实用户消息与宿主注入消息
 // （runtime context / skill 目录等）因首行文本巧合而误撞。
+// v1.8.0：新消息 kind='plugin:dsh-memory-palace'；同时**保留旧 kind='plugin'+plugin 字段的识别**
+// —— 历史会话里已持久化的旧投影消息经宿主 v3→v4 迁移会变成 plugin:dsh-memory-palace，但旧宿主
+// （<0.1.7）与未迁移数据仍是旧形状，双认可防「换 kind 当天在老会话里重复注入」。
 function isOwnProjection(msg) {
-  return msg?.source?.kind === "plugin" && msg?.source?.plugin === "dsh-memory-palace";
+  const s = msg?.source;
+  if (!s || s.form !== "instructions") return false;
+  if (s.kind === "plugin:dsh-memory-palace") return true;
+  return s.kind === "plugin" && s.plugin === "dsh-memory-palace";
 }
 
 function sameProjectionIdentity(left, right) {
