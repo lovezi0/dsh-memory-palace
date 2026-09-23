@@ -4,7 +4,7 @@
       // v1.1.3：设置读写走自有 route（/memory-palace/api），不再 bind settingsScope——
       // 非 loopback 下 settingsScope persistence=memory（set() no-op），保存永不落盘。
       const controller = new MemoryPalaceController(ctx);
-      // v1.8.0：设置面板 nav 条目换成自家 sparkle-twinkle 星标——宿主无 nav 图标位，
+      // v1.7.2-alpha.2：设置面板 nav 条目换成自家 sparkle-twinkle 星标——宿主无 nav 图标位，
       // 走「label 传节点 + CSS 隐藏回退齿轮」两步（原理/失效面见 40-sparkle.js 的 ensureNavStarStyles）。
       ensureNavStarStyles();
       const navLabel = () =>

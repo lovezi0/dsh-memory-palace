@@ -26,7 +26,7 @@
       document.head.appendChild(style);
     }
 
-    // ---- v1.8.0 设置面板 nav 图标（「记忆」条目）----
+    // ---- v1.7.2-alpha.2 设置面板 nav 图标（「记忆」条目）----
     // 宿主 SettingsRoot.navIcon(id) 是**硬编码白名单**（account/models/agent-presets/plugins/archived-sessions），
     // 未列出的第三方 section 一律回退齿轮图标，且 slots 契约（id/order/label）没开 nav 图标位、
     // 官方文档亦无「从 manifest 取 nav 图标」的机制（manifest icon 只进插件管理面板的卡片/行）。
