@@ -221,11 +221,12 @@ console.log("\n[特性1] buildProjections");
     resetTmp();
     mk(".deepseek-harness/memory");
     mk(".workbuddy/memory");
+    writeFileSync(join(TMP, "USER_MEMORY.md"), "# 用户级记忆\n- 偏好", "utf8");
     writeFileSync(join(TMP, ".deepseek-harness/MEMORY.md"), "# dsh 项目记忆\n- dsh 条目", "utf8");
     writeFileSync(join(TMP, ".workbuddy/memory/MEMORY.md"), "# buddy 项目记忆\n- buddy 条目", "utf8");
   };
   const build = (cfgOver = {}) => {
-    const cfg = baseCfg(cfgOver);
+    const cfg = baseCfg({ userMemoryPath: join(TMP, "USER_MEMORY.md"), ...cfgOver });
     const paths = createPaths(() => cfg, () => TMP);
     return buildProjections({ getConfig: () => cfg, paths });
   };
@@ -394,6 +395,31 @@ console.log("\n[特性1] registerProjection 钩子");
     const out = await run(l2, { session }, [], { kind: "enter", messages: [] });
     assert.equal(out.messages.length, 1, "只应补注入未被遮住的那条");
     assert.ok(norm(out.messages[0].content[0].text).includes(".workbuddy/memory/MEMORY.md"));
+  });
+
+  await checkAsync("多会话 CWD 隔离：activeCwd 指向会话 B 时，会话 A 仅投影会话 A 的记忆（防串台）", async () => {
+    resetTmp();
+    const dirA = join(TMP, "workspace-a");
+    const dirB = join(TMP, "workspace-b");
+    mkdirSync(join(dirA, ".deepseek-harness/memory"), { recursive: true });
+    mkdirSync(join(dirB, ".deepseek-harness/memory"), { recursive: true });
+    writeFileSync(join(dirA, ".deepseek-harness/MEMORY.md"), "# 项目A记忆\n- 属于A的事实", "utf8");
+    writeFileSync(join(dirB, ".deepseek-harness/MEMORY.md"), "# 项目B记忆\n- 属于B的事实", "utf8");
+
+    const cfgIso = baseCfg({ userMemoryPath: "~/.__nonexistent__/MEMORY.md" });
+    // 模拟全局 activeCwd 指向 dirB（例如被会话 B 触发更新）
+    let currentActiveCwd = dirB;
+    const pathsIso = createPaths(() => cfgIso, () => currentActiveCwd);
+    const listenerIso = capture(pathsIso, cfgIso);
+
+    // 会话 A 步进，带有自己的 header.cwd = dirA
+    const sessionA = { surface: { nodes: [] }, eventAt: () => undefined, header: { cwd: dirA } };
+    const outA = await run(listenerIso, { session: sessionA }, [], { kind: "enter", messages: [] });
+
+    assert.equal(outA.messages.length, 1, `期望仅产出会话 A 的 1 条项目记忆，实得 ${outA.messages.length}`);
+    const textA = outA.messages[0].content[0].text;
+    assert.ok(textA.includes("属于A的事实"), "会话 A 应该注入项目 A 的记忆");
+    assert.ok(!textA.includes("属于B的事实"), "会话 A 绝对不应串台注入项目 B 的记忆");
   });
 }
 
