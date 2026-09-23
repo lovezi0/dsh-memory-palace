@@ -71,14 +71,19 @@ function sectionHasEntry(md, section, entry) {
  */
 export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
   const cfg = () => getConfig();
+  // 从宿主 execute 第二参（ToolRunContext，defineTool 原样转发）取发起会话 cwd。
+  // 用可选链自然得 undefined（勿 `?? null`——null 会绕过 paths 默认参数导致 dirs 恒空）。
+  const sessionCwd = (exec) => exec?.agent?.session?.header?.cwd;
 
   // 目标文件解析：project = 主目标（dirs[0]，多 buddy 目录时与蒸馏按钮同语义只动主目标，
   // 章节级 stale 校验天然防止错位覆写）；user = 用户级 MEMORY.md。
-  function memFileOf(scope) {
+  // cwd 由调用方从 exec.agent.session.header.cwd 透传（多会话并发时 activeCwd 可能是别的
+  // 工作区，串台会写错项目）；缺省（undefined）回落 paths 工厂默认 = activeCwd，保持旧行为。
+  function memFileOf(scope, cwd) {
     if (scope === "user") return { file: expandHome(cfg().userMemoryPath), dirs: [] };
-    const dirs = paths.writeDirs();
+    const dirs = paths.writeDirs(cwd);
     if (!dirs.length) return null;
-    return { file: paths.memoryFileOf(dirs[0]), dirs };
+    return { file: paths.memoryFileOf(dirs[0], cwd), dirs };
   }
 
   // ---------- memory_write：章节追加/新增（章节化格式规范承载于 description——定案 #11） ----------
@@ -112,19 +117,20 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         },
         render: (_args, value) => [{ type: "text", text: value?.message ?? "Saved." }],
       },
-      async execute(args) {
+      async execute(args, exec) {
         state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
         const section = String(args.section ?? "").trim();
         const entry = String(args.entry ?? "").trim();
         if (!section || !entry) return { ok: false, message: "section 与 entry 均不能为空。" };
-        const target = memFileOf(args.scope === "user" ? "user" : "project");
+        const cwd = sessionCwd(exec);
+        const target = memFileOf(args.scope === "user" ? "user" : "project", cwd);
         if (!target) return { ok: false, message: "No active workspace." };
         try {
           let wrote = 0;
           let skipped = 0;
-          const files = target.dirs.length ? target.dirs.map((d) => paths.memoryFileOf(d)) : [target.file];
+          const files = target.dirs.length ? target.dirs.map((d) => paths.memoryFileOf(d, cwd)) : [target.file];
           for (const file of files) {
             const md = readMdSync(file);
             if (sectionHasEntry(md, section, entry)) {
@@ -195,14 +201,14 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         render: (_args, value) =>
           [{ type: "text", text: value?.actual ? `${value.message}\n\n当前实际内容：\n${value.actual}` : value?.message ?? "Done." }],
       },
-      async execute(args) {
+      async execute(args, exec) {
         state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings.", actual: "" };
         const section = String(args.section ?? "").trim();
         const oldText = String(args.oldText ?? "");
         if (!section || !oldText.trim()) return { ok: false, message: "section 与 oldText 均不能为空。", actual: "" };
-        const target = memFileOf(args.scope === "user" ? "user" : "project");
+        const target = memFileOf(args.scope === "user" ? "user" : "project", sessionCwd(exec));
         if (!target) return { ok: false, message: "No active workspace.", actual: "" };
         try {
           const file = target.file;
@@ -251,13 +257,14 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         },
         render: (_args, value) => [{ type: "text", text: value?.message ?? "Done." }],
       },
-      async execute(args) {
+      async execute(args, exec) {
         state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
-        const dirs = paths.writeDirs();
+        const cwd = sessionCwd(exec);
+        const dirs = paths.writeDirs(cwd);
         if (!dirs.length) return { ok: false, message: "No active workspace." };
-        const file = paths.memoryFileOf(dirs[0]);
+        const file = paths.memoryFileOf(dirs[0], cwd);
         // 复核双门禁（pre-execute 已拦一道；这里防绕过）
         const gate = checkReorgGate(file, c);
         if (!gate.ok) return { ok: false, message: `重整被门禁拒绝：${gate.reason}` };
@@ -308,9 +315,10 @@ export function attachHybridGuards(ctx, getConfig, paths, state) {
     }
     if (name !== "memory_reorganize") return next();
     const c = getConfig();
-    const dirs = paths.writeDirs();
+    const cwd = exec?.agent?.session?.header?.cwd;
+    const dirs = paths.writeDirs(cwd);
     if (!dirs.length) return { kind: "deny", reason: "无活动工作区，无法重整。" };
-    const file = paths.memoryFileOf(dirs[0]);
+    const file = paths.memoryFileOf(dirs[0], cwd);
     const gate = checkReorgGate(file, c);
     if (!gate.ok) return { kind: "deny", reason: gate.reason };
     const args = (exec.arguments && typeof exec.arguments === "object") ? exec.arguments : {};
