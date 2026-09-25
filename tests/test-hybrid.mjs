@@ -433,4 +433,44 @@ section("③ memory_reorganize 双门禁");
   ok("门禁：双满足通过");
 }
 
+// ---------- 缺陷修复回归（v1.8.0-alpha.1：D1 entry 扁平化 / D3 标题一致性） ----------
+section("缺陷修复回归（v1.8.0-alpha.1）");
+{
+  const md1 = "# 项目笔记\n\n## 环境必知\n- aaa\n";
+  const baseCount = parseSections(md1).sections.length;
+
+  // D1：多行 entry（含 \n## 标题 / \n# 标题）必须扁平化为单行，不得生成真实章节
+  const f1 = upsertSectionText(md1, "环境必知", "结论一\n## 伪造标题\n- 伪造条目\n# 伪造H1");
+  assert.equal(f1.ok, true, "D1: 多行 entry 应写入成功（扁平化）");
+  assert.equal(f1.flattened, true, "D1: 应标记 flattened");
+  assert.equal(parseSections(f1.text).sections.length, baseCount, "D1: 不得新增任何章节");
+  assert.ok(f1.text.includes("- 结论一；伪造标题；伪造条目；伪造H1"), "D1: 应合并为单行");
+  assert.ok(!f1.text.includes("## 伪造标题") && !f1.text.includes("# 伪造H1"), "D1: 注入标题不得落盘");
+  ok("D1 entry 扁平化（多行/标题注入不落盘）");
+
+  // D1：append 路径与新建章节路径同样扁平化
+  const f1b = appendToSectionText(md1, "环境必知", "行A\n行B");
+  assert.equal(f1b.ok, true);
+  assert.ok(f1b.text.includes("- 行A；行B"), "D1: append 路径应合并单行");
+  assert.equal(f1b.flattened, true);
+  const f1c = upsertSectionText(md1, "全新章节", "内容甲\n## 注入标题");
+  assert.equal(f1c.reason, "section-created");
+  assert.ok(!f1c.text.includes("## 注入标题"), "D1: 新建路径不得注入标题");
+  assert.ok(f1c.text.includes("- 内容甲；注入标题"), "D1: 新建路径合并单行");
+  ok("D1 append / 新建章节路径扁平化");
+
+  // D3：replace 模式校验 newText 标题行与 section 一致
+  const d3md = "## 章节A\n- 旧1\n- 旧2\n";
+  const d3 = replaceSectionText(d3md, "章节A", "## 章节A\n- 旧1\n- 旧2", "## 章节B\n- 新1");
+  assert.equal(d3.ok, false, "D3: 静默改名应被拒绝");
+  assert.equal(d3.reason, "heading-mismatch");
+  assert.ok(d3.actual.includes("章节A"), "D3: actual 应回显当前内容");
+  const d3b = replaceSectionText(d3md, "章节A", "## 章节A\n- 旧1\n- 旧2", "- 新1\n- 新2");
+  assert.equal(d3b.ok, false, "D3: 缺标题行应拒绝（防章节标题整行被吃）");
+  assert.equal(d3b.reason, "heading-mismatch");
+  const d3c = replaceSectionText(d3md, "章节A", "## 章节A\n- 旧1\n- 旧2", "##  章节A \n- 新1");
+  assert.equal(d3c.ok, true, "D3: 标题一致（容忍前缀/空白差异）应放行");
+  ok("D3 replace 模式校验标题一致性");
+}
+
 console.log(`\n${passed} 项断言全部通过`);

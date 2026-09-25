@@ -2,7 +2,7 @@
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.7-rc.1](https://img.shields.io/badge/DeepSeek%20Harness-0.1.7--rc.1-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.1.7-rc.2](https://img.shields.io/badge/DeepSeek%20Harness-0.1.7--rc.2-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness) [![Desktop: supported](https://img.shields.io/badge/Desktop-supported-success.svg?labelColor=4D6BFE)](#安装)
 
 ## 特性
 
@@ -14,10 +14,8 @@
 - **设置页集成**：全部配置均可在 DSH 设置面板中图形化调整（按板块折叠），无需改配置文件。
 - **自定义指令**：不适合写进记忆的特殊指令可在设置页配置，插件经系统提示词注入。
 - **记忆注入**：长期记忆与今日日志以「会话起始快照」常驻上下文、按文件身份各只注入一次 —— 既保证每个步骤都可见，又不破坏前缀缓存、不堆积冗余快照。
-- **记忆模式**
-    - **主动记忆（插件模式）**：以指令引导 AI 在完成任务、修复问题、确定决策、获知偏好时主动落档。*即将移除*
-    - **智能模式**：由模型自动提炼每轮新增内容，摘要进日志、长期事实进记忆。*即将移除*
-    - **混合模式（🔥推荐）**：子代理每轮自动整理日志并去重，长期记忆由主 AI 主动维护，兼顾自动化与可控性。
+- **记忆写入（v1.8.0 起唯一模式）**：**记忆子代理**每轮自动整理今日日志并去重（章节化、标删），**长期记忆 `MEMORY.md` 由主 AI 主动维护**，兼顾自动化与可控性。
+    - v1.8.0 破坏性变更：原「主动记忆（插件模式）」与「智能模式」已整体移除。二者的能力已被覆盖——主动落档由分工指令引导主 AI 承担，逐轮摘要由记忆子代理写进日志承担。
 - **标准插件包**：经官方插件机制一键安装，无需改动 harness。
 
 ## 记忆文件布局
@@ -42,21 +40,24 @@
 **读取（每轮对话）**——两条通道并行：
 
 ```
-① 系统提示词（恒定）：记忆公民指令 / 自定义指令等固定内容，前缀缓存友好
+① 系统提示词（恒定）：记忆分工指令 / 自定义指令等固定内容，前缀缓存友好
 ② 对话历史投影（易变）：用户级 + 项目级长期记忆、今日日志——按文件身份各注入一次，压缩后自动重注最新版
 ```
 
-**写入（每轮结束）**——经「防闲聊闸门」判定后异步追加：
+> 投影**逐文件独立截断**：用户级 `MEMORY.md` 受「用户级预算」约束，项目级 `MEMORY.md` 与今日日志各受「工作区预算」约束、互不挤占 —— 预算说的是**每个文件**的上限，不是所有文件合计的总量。被截掉的部分不丢，随时可用 `memory_read` 读取。
+
+**写入（每轮结束）**——交给记忆子代理异步处理：
 
 ```
-本轮结束 ──► 闸门：有工具调用 / 有错误 / AI 主动记 / 命中偏好·决策关键词 → 放行
-         │      否则跳过（不写、不调模型）
-         ├─► 摘要写入今日日志
-         ├─► 出错且开启「自动记录错误」→ 错误现象写入长期记忆
-         └─► 超期日志并入长期记忆后删除
+本轮结束 ──► 前置闸门：enabled / 计划模式 / 静默预设 / 有可用记忆目录 → 否则跳过
+         │
+         ├─► 记忆子代理把本轮实质内容写成章节化条目 → 今日日志（重复/过时条目标删）
+         └─► 长期记忆由主 AI 按分工指令主动维护（memory_write / memory_update_section）
 ```
 
-日志文件头统一为日期标题，写入时自动补齐（历史文件不回填）。
+日志文件头统一为日期标题，写入时自动补齐（历史文件不回填）。日志由子代理维护、**永不过期不删**（作为可追溯的证据层）。
+
+> 写入没有独立的开关：**插件装上并启用即视为记忆写入启用**。停写只有两条路——profile config 里设 `enabled: false`，或命中静默预设（`silentPresets`）。
 
 **工具**——AI 在对话中按需调用：
 
@@ -66,13 +67,13 @@
 | `memory_note_user` | 用户级 | 把跨项目偏好写入 `~/.deepseek-harness/MEMORY.md`（去重） |
 | `memory_read` | 按需 | 读取记忆。`scope` 默认 `memory`（用户级 + 项目级）；可选 `project`（仅项目级，与 `memory_write` 的写侧 scope 同名）/ `today` / `yesterday` / `daily`（近三天日志）/ `all`（长期记忆 + 日志） |
 | `memory_delete` | 用户级/项目级/每日级 | 按内容删除记忆条目（两阶段确认：先预览匹配位置与内容，用户确认后再删；删除动作经 harness 原生确认弹窗硬闸门，真人点允许才真正执行） |
-| `memory_write`（hybrid） | 项目级/用户级 | 章节化写入：章节存在则末尾追加，不存在则新建章节（章节化格式规范） |
-| `memory_update_section`（hybrid） | 项目级/用户级 | 整章节精确替换/单条标记删除：oldText 归一化精确匹配防 stale，失败拒绝并回显实际内容 |
-| `memory_reorganize`（hybrid） | 仅项目级 | 全量重整 MEMORY.md：双门禁（超出注入预算 且 距上次重整 ≥ 冷却天数）机器校验，原子替换 + 时间戳注释，用户确认弹窗 |
+| `memory_write` | 项目级/用户级 | 章节化写入：章节存在则末尾追加，不存在则新建章节（章节化格式规范） |
+| `memory_update_section` | 项目级/用户级 | 整章节精确替换/单条标记删除：oldText 归一化精确匹配防 stale，失败拒绝并回显实际内容 |
+| `memory_reorganize` | 仅项目级 | 全量重整 MEMORY.md：双门禁（超出注入预算 且 距上次重整 ≥ 冷却天数）机器校验，原子替换 + 时间戳注释，用户确认弹窗 |
 
 ## 安装
 
-前置要求：已安装 DeepSeek Harness 及其 CLI（`dsh` 命令可用）。
+### CLI 版（`web` profile）
 
 方式一：直接通过 GitHub 安装（推荐，`lib/` 构建产物已随仓库分发，装即用）
 
@@ -101,106 +102,36 @@ dsh plugin --profile web add dsh-memory-palace
 npm install dsh-memory-palace --registry=https://registry.npmmirror.com/
 dsh plugin --profile web add dsh-memory-palace
 ```
-
-卸载：
+### CLI 版卸载
 
 ```bash
 dsh plugin --profile web remove dsh-memory-palace
 ```
 
+### Desktop 版
+- github: `github:lovezi0/dsh-memory-palace`
+- npm: `dsh-memory-palace`
+
 ## 配置
 *面板路径为 DSH 设置 →「记忆」*
-所有配置项（核心 / 自定义指令 / 自动记录 / 存储路径与预算 / 开发 五张卡片的字段、默认值与说明）已整理至 [CONFIG.md](./CONFIG.md)
+所有配置项（核心 / 自定义指令 / 记忆写入 / 存储路径与预算 / 开发 五张卡片的字段、默认值与说明）已整理至 [CONFIG.md](./CONFIG.md)
 
 ## 开发
 
 架构 / 构建 / 技术要点 / 蒸馏失败重试 见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
-提示词与智能模式蒸馏（公民指令 / 摘要 / 蒸馏） 见 [PROMPTS.md](./PROMPTS.md)。
+提示词与蒸馏（分工指令 / 会话蒸馏 / 项目蒸馏） 见 [PROMPTS.md](./PROMPTS.md)。
 
 ## 版本历史
 
-- **1.7.2**
-    - 修正注释版本号笔误
-    - 徽标核验线更新至 0.1.7-rc.1
-    - npm publish
-    - **1.7.2-alpha.3**
-        - 🐛修复记忆投影通道并发导致记忆串台的问题 @sunligh91
-        - 🐛修复插件工具串台问题
-    - **1.7.2-alpha.2**
-        - 💪适配deepseek harness 0.1.7-alpha.1
-        - 💪add memory plugin icon
-        - 💪记忆模式默认为[混合模式] *未来的版本将移除插件模式&智能模式*
-    - **1.7.2-alpha.1**
-        - 💪dsh Agent 预设[极简模式]时禁用记忆注入、记忆生成、记忆工具
-- **1.7.1**
-    - 💪移除日志重注机制优化缓存命中降低堆积冗余
-    - 💪记忆设置UI优化
-    - 🔥增加自定义指令 prompt 配置与注入
-    - 💪memory_read 增加 scope 参数
-- **1.7.0**
-    - 🔥新增独立通道注入记忆文件
-    - 🐛修复存在多种记忆路径时读取冲突的问题
-    - 💪优化记忆子 agent 投影消息节省 token
-    - 💪优化 SUBAGENT_SYSTEM 记忆输出格式
-- **1.6.3**
-    - npm publish
-    - **1.6.3.alpha.4**
-        - 🐛修复三种记忆模式配置互串的问题
-        - 🐛修复记忆子agent工具幻觉问题
-- **1.6.2**
-    - **1.6.2.alpha.4**
-        - 🔥适配deepseek harness 0.1.2-alpha.4
-    - **1.6.2.alpha.2**
-        - 原1.6.0发布
-- **1.6.1**
-    - 原1.6.0.alpha.1发布
-- **1.6.0**
-    - 🔥适配deepseek harness 0.1.2-alpha.2
-- **1.6.0.alpha.1** *未发布npm*
-    - 🔥新增混合模式(hybrid) *仍默认插件模式，建议切换至混合模式*
-    - 🔥新增记忆子agent处理轮次会话日志
-    - 💪优化记忆文件结构做到真正人类可读
-    - 💪优化调试模式参数保存
-- **1.4.2.alpha.1** *未发布npm*
-    - 💪记忆注入：仅首次注入 + compaction 重注
-    - 💪优化手动项目蒸馏prompt
-    - 💪[smart] 标签全移除
-    - 🐛修复记忆文件LIFO/FIFO 错配
-- **1.4.1**
-    - 🐛修复输出预算使用错位的问题
-    - 🐛增加调试模式日志级别 *默认info 仅输出元数据日志，debug 输出完整LLM text*
-- **1.4.0**
-    - 🔥智能模式增加最大输出Token限制
-    - 🔥智能模式增加失败重试机制
-    - 🔥智能模式会增加回馈存量记忆
-    - 🐛修复自动记录部分设置位置错误问题
-- **1.3.0**
-    - 🔥新增计划模式禁止写入记忆
-    - 💪设置-记忆控件样式优化 *使用dsh原生样式*
-    - 💪清理重复patch信息
-    - 🔥增加调试模式 *默认关闭，仅用于智能模式蒸馏失败输出调试信息*
-- **1.2.3**
-- **1.2.2**
-    - 🐛修复智能模式自定义摘要模型不生效的问题
-- **1.2.1**
-    - 💪发布npm
-- **1.2.0**
-    - 🔥会话标题栏【记忆】按钮
-    - 🔥手动蒸馏会话与项目记忆
-    - 🐛修复记忆预算注入无效
-    - 💪项目混合式模块化重构
-- **1.1.4**
-    - 🔥智能模式摘要上线
-- **1.1.2**
-    - 🐛修复记忆设置保存不生效的问题
-- **1.1.1**
-    - 💪每日日志格式简化
-- **1.1.0**
-    - 🔥新增「智能模式/插件模式」切换功能
-- **1.0.0**
-    - 🔥新增防闲聊闸门
-    - 🔥新增记忆公民指令
-    - 🔥新增删除记忆工具
+- **1.8.0**
+    - **1.8.0-alpha.1**
+        - 💥移除插件模式与智能模式，记忆写入统一为混合模式
+        - 💥配置项 memoryMode / autoCaptureErrors / dailyLogRetentionDays 删除（旧值静默失效）
+        - 💥移除记忆写入总开关
+        - 🐛memory文件格式错误时读取漂移的问题
+        - 💪适配deepseek harness 0.1.7-rc.2
+        - 💪适配deepseek harness desktop
+- **v1.7.2-legacy** — dsh-memory-palace 从 v1.0.0 的基础记忆读写（防闲聊闸门、公民指令、删除工具）起步，逐步演进到 v1.7.2 的「混合模式 + 独立通道注入 + 自定义指令 + 记忆子 agent 蒸馏」，全程主线是不断增强记忆生成/注入方式，同时持续修复模式互串、工具串台、缓存堆积等稳定性缺陷。历史，见 [CHANGELOG.md](./CHANGELOG.md)
 - **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
 
 ## 参考与致谢

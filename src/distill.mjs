@@ -1,5 +1,6 @@
-// memory-palace 蒸馏业务：会话蒸馏核心（自动智能模式 + 按钮「蒸馏会话」共用）+ 项目记忆蒸馏。
-// 经 createDistill 工厂注入 ctx/config/paths/records/运行时状态；返回句柄供 index.mjs 装配与 api.mjs 调用。
+// memory-palace 蒸馏业务：会话蒸馏核心（按钮「蒸馏会话」）+ 项目记忆蒸馏。
+// 经 createDistill 工厂注入 ctx/config/paths/records；返回句柄供 index.mjs 装配与 api.mjs 调用。
+// v1.8.0：原 smart 模式自动摘要入口 summarizeTurn 已删除，distillSessionCore 唯一调用方 = 手动按钮。
 import { mkdir, unlink, writeFile, rename } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
@@ -10,9 +11,9 @@ import { appendLineDedup, readNumberedMemory, applyMemoryOp } from "./common/rec
 import { runWithRetry, RETRY_CONSTANTS } from "./common/retry.mjs";
 
 /**
- * @param {{ ctx: object, getConfig: () => object, paths: object, records: object, state: object }} deps
+ * @param {{ ctx: object, getConfig: () => object, paths: object, records: object }} deps
  */
-export function createDistill({ ctx, getConfig, paths, records, state }) {
+export function createDistill({ ctx, getConfig, paths, records }) {
   const cfg = () => getConfig();
 
   // 调试日志（v1.3.0）：dbgFail=失败/跳过留痕（无条件输出，不受开关控制，保证排障可观测）；
@@ -93,13 +94,12 @@ export function createDistill({ ctx, getConfig, paths, records, state }) {
   }
 
   // 蒸馏核心（v1.2.0 抽取）：对指定 session 的 [fromSeq, ∞) surface 事件做 LLM 智能摘要并写盘。
-  // 自动智能模式（summarizeTurn，增量断点）与按钮「蒸馏会话」（全量 fromSeq=0）共用本核心。
+  // v1.8.0：唯一调用方 = 按钮「蒸馏会话」（全量 fromSeq=0）；原 smart 模式自动摘要链路已删除。
   // 返回 { ok, summary, durableCount }；失败 { ok:false }（调用方各自决定降级策略）。
   async function distillSessionCore(session, dirs, fromSeq, opts) {
     const allowDelete = !!(opts && opts.allowDelete);
-    // 回喂存量记忆（v1.4.0 特性3）：智能模式级能力——feedbackEnabled 开启即在【自动智能模式（turn/end）
-    // 与手动蒸馏按钮】两条链路都回喂项目级 + 用户级 MEMORY.md 全文（逐行编号、无截断）。
-    // delete 仍仅手动蒸馏（allowDelete=true）开放；自动模式 memoryOps 中的 delete 在 §5.5 被 !allowDelete 跳过。
+    // 回喂存量记忆（v1.4.0 特性3）：feedbackEnabled 开启即回喂项目级 + 用户级 MEMORY.md 全文
+    // （逐行编号、无截断）。delete 由 allowDelete 决定（手动按钮传 true）。
     // 回喂目标严格限定为 MEMORY.md；每日日志（.deepseek-harness/memory/YYYY-MM-DD.md）不读取、不改写、不删旧行。
     const useFeedback = !!cfg().feedbackEnabled;
     if (!session) {
@@ -275,17 +275,6 @@ export function createDistill({ ctx, getConfig, paths, records, state }) {
     return { ok: true, summary, durableCount: durable.length };
   }
 
-  // 智能模式核心：LLM 智能会话摘要（增量范围，产物带 [smart] 标记）。
-  // 输入：capturedTurn（本轮缓冲，仅用于失败降级）、dirs（写盘目标）、isError。
-  // 核心逻辑在 distillSessionCore；此处只负责增量断点（state.lastSummarizedSeq）的推进。
-  // 失败返回 false 由调用方降级轻量条目；handler 永不 reject（调用方包 catch）。
-  async function summarizeTurn(capturedTurn, dirs, isError) {
-    if (!state.activeSession) return false;
-    const r = await distillSessionCore(state.activeSession, dirs, state.lastSummarizedSeq);
-    if (r.ok) state.lastSummarizedSeq = state.activeSession.seq;
-    return r.ok;
-  }
-
   // ---------- v1.2.0 项目记忆蒸馏（按钮「蒸馏项目记忆」） ----------
   // 流程：读主目标 MEMORY.md → DISTILL_PROMPT 蒸馏 → 写 memory-cover.md（同目录，保证 rename 原子）
   // → 完整性检查 → 备份 MEMORY.md.{时间戳} → rename 覆盖 → cover 随 rename 消失。
@@ -399,5 +388,5 @@ export function createDistill({ ctx, getConfig, paths, records, state }) {
     }
   }
 
-  return { distillSessionCore, summarizeTurn, distillProjectMemory, distillLocks };
+  return { distillSessionCore, distillProjectMemory, distillLocks };
 }

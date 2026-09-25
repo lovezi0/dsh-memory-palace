@@ -19,13 +19,9 @@ const BASE = {
   enabled: true,
   userMemoryPath: "~/.deepseek-harness/MEMORY.md",
   workspaceMemoryDir: ".deepseek-harness/memory",
-  dailyLogRetentionDays: 30,
   userBudgetChars: 4000,
   workspaceBudgetChars: 3000,
-  summarize: true,
-  memoryMode: "plugin",
   summaryModel: "",
-  autoCaptureErrors: true,
   distillDebugLog: false,
 };
 
@@ -207,18 +203,46 @@ const main = await loadPlugin();
 assert(main.captured.sections.length === 1, "[1] 1 section registered");
 assert(main.captured.tools.map((t) => t.name).join(",") === "memory_note,memory_note_user,memory_read,memory_delete,memory_write,memory_update_section,memory_reorganize", "[1] tools = 4 legacy + 3 hybrid (v1.6.0 unconditional registration)");
 assert((main.captured.listeners["session/event"] || []).length === 1, "[1] session/event listener registered");
-assert(inject.includes("llm"), "[1] inject includes 'llm' (smart mode needs it)");
+assert(inject.includes("llm"), "[1] inject includes 'llm' (memory sub-agent needs it)");
 const text = main.captured.sections[0].text();
 assert(typeof text === "string", "[2] section.text() returns string");
 
-// ---------- [1c] v1.7.2：默认记忆模式 = hybrid ----------
-console.log("[1c] DEFAULT MEMORY MODE");
+// ---------- [1c] v1.8.0：memoryMode / autoCaptureErrors / summarize / dailyLogRetentionDays 均已移除 ----------
+console.log("[1c] REMOVED CONFIG FIELDS");
 {
   const { default: Schema } = await import("@deepseek-ai/schemastery");
   const [resolved] = Schema.resolve({}, Config);
-  const raw = resolved.memoryMode;
-  const value = raw && typeof raw.get === "function" ? raw.get() : raw;
-  assert(value === "hybrid", "[1c] 空配置解析后 memoryMode 默认 = hybrid（v1.7.2 起）");
+  assert(!("memoryMode" in resolved), "[1c] memoryMode 字段已从 schema 移除（v1.8.0 起恒定混合模式）");
+  assert(!("autoCaptureErrors" in resolved), "[1c] autoCaptureErrors 字段已移除（plugin 模式专属）");
+  assert(!("dailyLogRetentionDays" in resolved), "[1c] dailyLogRetentionDays 字段已移除（日志永不过期）");
+  assert(!("summarize" in resolved), "[1c] summarize 字段已移除（写入恒定＝插件已装且启用）");
+  // 保留字段仍在，且不再有独立的写入闸门
+  assert("summaryModel" in resolved && "userBudgetChars" in resolved, "[1c] 其余配置字段未受影响");
+  // 老 profile 里保留的废弃键必须原样透传、不抛错——宿主装载期校验走 standard-schema 入口，
+  // 收窄 union 会让存量 profile 装载失败（DSH-CONTRACT-TRACKING §1.9 实测禁区）。
+  const [value] = Schema.resolve({ memoryMode: "plugin", autoCaptureErrors: true, summarize: false }, Config);
+  assert(value.memoryMode === "plugin", "[1c] 废弃键原样透传（老 profile 不会被装载期拦下）");
+  assert(value.summarize === false, "[1c] 废弃的总开关键同样原样透传");
+
+  // 端到端装载回归（本版唯一的「装不上」风险点）：老 profile 带着 plugin/smart 时代的
+  // 废弃键经 cordis resolveConfig（= Config["~standard"].validate）必须装载成功。
+  const legacyLoad = await loadPlugin({
+    memoryMode: "plugin",
+    autoCaptureErrors: true,
+    summarize: false,
+    dailyLogRetentionDays: 30,
+  });
+  assert(legacyLoad.captured.sections.length === 1,
+    "[1c] 老 profile 带废弃键 → 插件仍正常装载（无 ValidationError）");
+  // 写入不再受总开关约束：即便老 profile 写着 summarize:false，子代理仍应被调用。
+  const wsC = mkdtempSync(join(tmpdir(), "mem-1c-"));
+  const sC = fakeSession(wsC);
+  fire(sC, legacyLoad.captured, "user/message", { message: { content: "分析仓库结构" } });
+  fire(sC, legacyLoad.captured, "tool/result", { content: "src/x" });
+  fire(sC, legacyLoad.captured, "turn/end", {});
+  await sleep(1800);
+  assert(legacyLoad.mockLlm.calls.length >= 1,
+    "[1c] summarize:false 的旧配置不再阻断写入（总开关已废，装即写）");
 }
 
 // ---------- [1b] v1.7.1 特性3：自定义指令注入（section 内、位于记忆指令之后） ----------
@@ -241,127 +265,27 @@ console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
   assert(!tc.includes("# 今日工作日志"), "[1b] daily log must NOT leak into section");
 }
 
-// ---------- 场景 A：实质轮次（工具调用）→ 轻量条目写入日志（无 LLM） ----------
-console.log("[A] SUBSTANTIVE TURN → LIGHT ENTRY");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-a-"));
-  const { captured } = await loadPlugin();
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
-  fire(s, captured, "tool/result", { content: "src/index.mjs, src/client.js" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[A] daily log written");
-  assert(readFileSync(daily, "utf8").includes("分析仓库结构"), "[A] daily contains raw user text (light entry)");
-}
-
-// ---------- 场景 B：错误轮次 → 落 MEMORY「错误+方案」 ----------
-console.log("[B] ERROR TURN → MEMORY ERROR ENTRY");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-b-"));
-  const { captured } = await loadPlugin();
-  const s = fakeSession(ws);
-  fire(s, captured, "tool/result", { content: "boom" });
-  fire(s, captured, "turn/end", { reason: { kind: "error", message: "boom: something failed" } });
-  await sleep(1800);
-  const mem = join(ws, ".deepseek-harness/MEMORY.md");
-  assert(existsSync(mem), "[B] MEMORY.md created");
-  const memText = readFileSync(mem, "utf8");
-  assert(memText.includes("in-session 错误") && memText.includes("boom"), "[B] MEMORY has error entry (no LLM)");
-}
-
-// ---------- 场景 C：autoCaptureErrors=false → 不落 MEMORY 错误 ----------
-console.log("[C] autoCaptureErrors=false → NO MEMORY ERROR");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-c-"));
-  const { captured } = await loadPlugin({ autoCaptureErrors: false });
-  const s = fakeSession(ws);
-  fire(s, captured, "tool/result", { content: "boom" });
-  fire(s, captured, "turn/end", { reason: { kind: "error", message: "boom: hidden" } });
-  await sleep(1800);
-  const mem = join(ws, ".deepseek-harness/MEMORY.md");
-  const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
-  assert(!memText.includes("boom: hidden"), "[C] error NOT written to MEMORY when switch off");
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[C] daily still written (summary gate open via error)");
-}
-
-// ---------- 场景 D：summarize=false → 完全关闭自动记录（agent 主动记 memory_note 仍可用） ----------
-console.log("[D] summarize=false → NO RECORDING");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-d-"));
-  const { captured } = await loadPlugin({ summarize: false });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
-  fire(s, captured, "tool/result", { content: "src/..." });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(!existsSync(daily), "[D] no daily written when summarize off");
-}
-
-// ---------- 场景 F：防闲聊闸门（A+D 合并） ----------
-console.log("[F] CHITCHAT GATE (A+D): trivial rounds not written");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-f-"));
-  const { captured } = await loadPlugin();
-  const s = fakeSession(ws);
-  const greetings = ["hello", "你好", "hi", "阿八八八", "？", "   "];
-  for (const g of greetings) {
-    fire(s, captured, "user/message", { message: { content: g } });
-    fire(s, captured, "turn/end", {});
-    await sleep(120);
-    const daily = dailyFile(ws);
-    assert(!existsSync(daily), `[F] "${g}" → no daily log`);
-  }
-}
-
-// ---------- 场景 F2：剥离 system-reminder + 摘要仍可写 ----------
-console.log("[F2] STRIP system-reminder + summarize");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-f2-"));
-  const { captured } = await loadPlugin();
-  const s = fakeSession(ws);
-  fire(s, captured, "assistant/message", { message: { content: "<system-reminder>可用 skills 列表…</system-reminder> hi" } });
-  fire(s, captured, "user/message", { message: { content: "分析仓库" } });
-  fire(s, captured, "tool/result", { content: "src/..." });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[F2] daily written despite reminder noise");
-}
-
-// ---------- 场景 F3：关键词命中 → 纯文本也写（D 信号） ----------
-console.log("[F3] KEYWORD HIT → written (no tool)");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-f3-"));
-  const { captured } = await loadPlugin();
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "我决定以后都用 tabs 缩进" } });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[F3] daily written on keyword (决定)");
-}
-
-// ---------- 场景 G：buddy 桥接 ----------
+// ---------- 场景 G：buddy 桥接（写入目标解析） ----------
+// v1.8.0：原断言「buddy 每日日志已落盘」依赖已删除的轻量兜底路径；改为断言
+// ① 写入目标解析到 buddy 目录 ② 子代理在该工作区被调用（写入路径活着）。
 console.log("[G] BUDDY BRIDGE");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-g-"));
   mkdirSync(join(ws, ".workbuddy", "memory"), { recursive: true });
-  const { captured } = await loadPlugin();
+  const { captured, mockLlm } = await loadPlugin();
   const s = fakeSession(ws);
   fire(s, captured, "user/message", { message: { content: "分析" } });
   fire(s, captured, "tool/result", { content: "x" });
   fire(s, captured, "turn/end", {});
   await sleep(1800);
-  const today = localDate(new Date());
-  const buddyDaily = join(ws, ".workbuddy", "memory", today + ".md");
-  const dshDaily = join(ws, ".deepseek-harness", "memory", today + ".md");
-  assert(existsSync(buddyDaily), "[G] buddy daily written");
-  assert(!existsSync(dshDaily), "[G] dsh daily NOT created");
+  const cfgG = { ...BASE, bridgeBuddyMemory: true, buddyWorkspaceMemoryDirs: [".workbuddy/memory", ".codebuddy/memory"] };
+  const pathsG = createPaths(() => cfgG, () => ws);
+  const dirsG = pathsG.writeDirs(ws);
+  assert(dirsG.length === 1 && dirsG[0].endsWith(join(".workbuddy", "memory")),
+    "[G] write dir resolved to buddy memory dir");
+  assert(!existsSync(join(ws, ".deepseek-harness", "memory")), "[G] dsh memory dir NOT created (buddy bridge active)");
   assert(!existsSync(join(ws, ".deepseek-harness", "MEMORY.md")), "[G] dsh MEMORY.md NOT created (buddy bridge active)");
+  assert(mockLlm.calls.length >= 1, "[G] memory sub-agent invoked for the bridged workspace");
 }
 
 // ---------- 场景 H：memory_note 去重 ----------
@@ -441,40 +365,30 @@ console.log("[J] memory_read SCOPE");
   assert(daily.ok && daily.memory.includes(yesterday), "[J] daily: yesterday log included");
   assert(daily.memory.includes("昨天定的约定"), "[J] daily: log content included");
 
-  // scope='all'：同样应带出日志
-  const all = await readTool.execute({ scope: "all" });
-  assert(all.ok && all.memory.includes("昨天定的约定"), "[J] all: log content included");
-}
+    // scope='all'：同样应带出日志
+    const all = await readTool.execute({ scope: "all" });
+    assert(all.ok && all.memory.includes("昨天定的约定"), "[J] all: log content included");
 
-// ---------- 场景 K：工具/代码执行期报错（turn/end=completed，非 error）→ 仍捕获 (issue 1 修复) ----------
-console.log("[K] TOOL-ERROR (turn completed) → still captured (issue 1 fix)");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-k-"));
-  const { captured } = await loadPlugin({ autoCaptureErrors: true });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "检查一下工作区的实际路径" } });
-  fire(s, captured, "tool/result", { content: "Error: code run failed (exception): ReferenceError: require is not defined" });
-  fire(s, captured, "turn/end", { reason: { kind: "completed" } });
-  await sleep(1800);
-  const mem = join(ws, ".deepseek-harness/MEMORY.md");
-  assert(existsSync(mem), "[K] MEMORY.md created");
-  const memText = readFileSync(mem, "utf8");
-  assert(memText.includes("in-session 错误") && memText.includes("require is not defined"), "[K] error captured from tool result despite completed turn");
-}
-// ---------- 场景 K2：autoCaptureErrors=false → 即便工具报错也不落 MEMORY ----------
-console.log("[K2] autoCaptureErrors=false → NO MEMORY error even on tool error");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-k2-"));
-  const { captured } = await loadPlugin({ autoCaptureErrors: false });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "检查路径" } });
-  fire(s, captured, "tool/result", { content: "code run failed (exception): ReferenceError: require is not defined" });
-  fire(s, captured, "turn/end", { reason: { kind: "completed" } });
-  await sleep(1800);
-  const mem = join(ws, ".deepseek-harness/MEMORY.md");
-  const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
-  assert(!memText.includes("in-session 错误"), "[K2] error NOT captured to MEMORY when switch off");
-}
+    // v1.8.0-alpha.1 修复（D2）：日志 scope 剥删除线墓碑（不再冒充有效条目/占预算）；
+    // memory/project scope 保留墓碑 —— replace 模式的 stale 校验需要含墓碑的磁盘原文。
+    const wsJ2 = mkdtempSync(join(tmpdir(), "mem-j2-"));
+    const memDirJ2 = join(wsJ2, ".workbuddy", "memory");
+    mkdirSync(memDirJ2, { recursive: true });
+    const yJ2 = localDate(new Date(Date.now() - 86400000));
+    const fsJ2 = await import("node:fs/promises");
+    await fsJ2.writeFile(join(memDirJ2, `${yJ2}.md`), "## 环境必知\n- 有效条目\n- ~~已作废条目~~\n", "utf8");
+    await fsJ2.writeFile(join(memDirJ2, "MEMORY.md"), "## 章节\n- 现行条目\n- ~~墓碑条目~~\n", "utf8");
+    const capJ2 = await loadPlugin();
+    const sJ2 = fakeSession(wsJ2);
+    fire(sJ2, capJ2.captured, "user/message", { message: { content: "j2" } });
+    const readJ2 = capJ2.captured.tools.find((t) => t.name === "memory_read");
+    const logRead = await readJ2.execute({ scope: "yesterday" });
+    assert(logRead.memory.includes("有效条目"), "[J2] valid log entry kept");
+    assert(!logRead.memory.includes("已作废条目"), "[J2] tombstone stripped from log read");
+    const memRead = await readJ2.execute({ scope: "project" });
+    assert(memRead.memory.includes("现行条目"), "[J2] memory entry kept");
+    assert(memRead.memory.includes("墓碑条目"), "[J2] MEMORY.md keeps tombstones (stale match needs raw)");
+  }
 
 // ---------- 场景 L：memory_delete 按内容删除（用户级 + 项目级） ----------
 console.log("[L] memory_delete");
@@ -592,298 +506,46 @@ console.log("[M] pre-execute approval gate (native popup)");
   assert(rOther.kind === "allow", "[M] unrelated tool passes through");
 }
 
-// ---------- 场景 T：工具任务轮次（多 turn 拆开）必须落记忆 ----------
-// 复现用户报告：让 dsh「写脚本统计文件数量」（含多次工具调用），此前因 tool/result 文本取不到 → hasTool 永远 false
-// → 闸门误判非实质轮次 → 不写记忆。修复后 tool-result block 嵌套文本被正确提取，多 turn 累积后落盘。
-console.log("[T] tool-task turn (multi-turn) writes memory");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-t-"));
-  const { captured } = await loadPlugin();
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "用 Python 写个脚本统计每个子目录的文件数" } });
-  fire(s, captured, "tool/result", { content: "wrote count_files.py (1598 bytes)" });
-  fire(s, captured, "turn/end", {}); // turn 1（含工具结果）
-  fire(s, captured, "assistant/message", { message: { content: [{ type: "text", text: "再运行一下确认结果" }] } });
-  fire(s, captured, "tool/result", { content: "ran: 3 files in 2 dirs" });
-  fire(s, captured, "turn/end", {}); // turn 2（又含工具结果）
-  fire(s, captured, "assistant/message", { message: { content: [{ type: "text", text: "已完成" }] } });
-  fire(s, captured, "turn/end", {}); // turn 3（最终，无工具）
-  await sleep(1800); // 等 debounce flush
-  const daily = dailyFile(ws);
-  const text = existsSync(daily) ? readFileSync(daily, "utf8") : "";
-  assert(text.length > 0, "[T] 工具任务轮次已落记忆（多 turn 累积后写入）");
-}
-
-// ---------- 场景 V：冷启动（记忆全空）时主动记忆指令仍注入 ----------
-console.log("[V] section 空记忆仍注入记忆公民指令");
+// ---------- 场景 V：冷启动（记忆全空）时写入分工指令仍注入 ----------
+// v1.8.0：原断言针对 plugin 模式的「记忆公民指令」，该分支已删；改为断言 HYBRID_PROACTIVE 与工具指引。
+console.log("[V] cold start → write-role instructions still injected");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-v-"));
   const emptyUser = join(ws, "no-user-memory.md");
   const { captured } = await loadPlugin({ userMemoryPath: emptyUser });
-  const text = captured.sections[0].text();
-  assert(typeof text === "string" && text.length > 0, "[V] 空记忆时 section 非空");
-  assert(text.includes("记忆公民指令"), "[V] 空记忆时仍注入主动记忆指令");
-  assert(text.includes("memory_note"), "[V] 指令含记忆工具指引");
+  const t = captured.sections[0].text();
+  assert(typeof t === "string" && t.length > 0, "[V] 空记忆时 section 非空");
+  assert(t.includes("记忆子代理"), "[V] 空记忆时仍注入记忆分工指令（HYBRID_PROACTIVE）");
+  assert(t.includes("memory_write") && t.includes("memory_update_section"),
+    "[V] 分工指令含 MEMORY.md 维护工具指引");
+  assert(t.includes("memory_note") && t.includes("memory_read"),
+    "[V] intro 含 memory_note / memory_read 工具指引");
 }
 
-// ---------- 场景 V2：智能模式 section 注入「记忆说明」而非「记忆公民指令」 ----------
-console.log("[V2] SMART MODE → section injects memory note, not citizen instruction");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-v2-"));
-  const { captured } = await loadPlugin({ memoryMode: "smart" });
-  const text = captured.sections[0].text();
-  assert(text.includes("记忆说明"), "[V2] smart section has memory note");
-  assert(!text.includes("记忆公民指令"), "[V2] smart section does NOT inject citizen instruction");
-  assert(text.includes("memory_read"), "[V2] smart section still mentions memory_read");
-}
-
-// ---------- 场景 S1：智能模式 → LLM 摘要 + [smart] 标记 + 复用会话模型 ----------
-console.log("[S1] SMART MODE → LLM summary + [smart] tag");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s1-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
-  fire(s, captured, "tool/result", { content: "src/index.mjs, src/client.js" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[S1] daily written");
-  const text = readFileSync(daily, "utf8");
-  assert(text.includes("SUMMARY"), "[S1] daily contains LLM summary");
-  assert(text.includes("[smart]"), "[S1] daily entry tagged [smart]");
-  assert(mockLlm.calls.length >= 1, "[S1] llm called");
-  assert(mockLlm.calls[0].provider === "deepseek" && mockLlm.calls[0].model === "deepseek-chat", "[S1] provider/model from session requestHeader");
-}
-
-// ---------- 场景 S2：智能模式 → summaryModel 覆盖 ----------
-console.log("[S2] SMART MODE → summaryModel override");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s2-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", summaryModel: "openai/gpt-4o" });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析" } });
-  fire(s, captured, "tool/result", { content: "x" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  assert(mockLlm.calls.length >= 1, "[S2] llm called");
-  // v1.2.3：model 参数必须原样直传 summaryModel（注册表 id），不得拆段
-  assert(mockLlm.calls[0].provider === "openai" && mockLlm.calls[0].model === "openai/gpt-4o", "[S2] summaryModel override used (model id verbatim)");
-}
-
-// ---------- 场景 S2b：智能模式 → 带 provider 前缀的 summaryModel（nvidia 双段 id 原样直传） ----------
-console.log("[S2b] SMART MODE → prefixed summaryModel id passes verbatim");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s2b-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", summaryModel: "nvidia/nemotron-3-ultra-550b-a55b" });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析" } });
-  fire(s, captured, "tool/result", { content: "x" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  assert(mockLlm.calls.length >= 1, "[S2b] llm called");
-  // v1.2.3 修复：provider 取首段，model 保持完整 id（不再拆成裸 id → UNKNOWN_MODEL）
-  assert(mockLlm.calls[0].provider === "nvidia", "[S2b] provider from first segment");
-  assert(mockLlm.calls[0].model === "nvidia/nemotron-3-ultra-550b-a55b", "[S2b] full prefixed model id passed verbatim");
-}
-
-// ---------- 场景 S2c：智能模式 → 裸 id summaryModel（mimo-v2.5）经注册表反查归属 provider ----------
-console.log("[S2c] SMART MODE → bare summaryModel id resolved via registry");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s2c-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", summaryModel: "mimo-v2.5" });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析" } });
-  fire(s, captured, "tool/result", { content: "x" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  assert(mockLlm.calls.length >= 1, "[S2c] llm called");
-  // v1.2.3 修复：裸 id 经 listProviders+listModels 反查 → provider 为 xiaomi，model 保持原样
-  assert(mockLlm.calls[0].provider === "xiaomi", "[S2c] bare id resolved to owning provider via registry");
-  assert(mockLlm.calls[0].model === "mimo-v2.5", "[S2c] bare model id passed verbatim");
-}
-
-// ---------- 场景 S3：智能模式 → 不做独立错误捕获（错误走摘要/降级） ----------
-console.log("[S3] SMART MODE → no independent plugin-style error capture");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s3-"));
-  const { captured } = await loadPlugin({ memoryMode: "smart" });
-  const s = fakeSession(ws);
-  fire(s, captured, "tool/result", { content: "boom: something failed" });
-  fire(s, captured, "turn/end", { reason: { kind: "error", message: "boom: hidden" } });
-  await sleep(1800);
-  const mem = join(ws, ".deepseek-harness/MEMORY.md");
-  const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
-  assert(!memText.includes("in-session 错误"), "[S3] smart mode does NOT write plugin-style error entry");
-}
-
-// ---------- 场景 S4：智能模式 → durable 提炼进 MEMORY.md（带 [smart] 标记 + 去重） ----------
-console.log("[S4] SMART MODE → durable distilled into MEMORY.md with [smart]");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s4-"));
-  const durableText = '{"summary":"did analysis","durable":[{"scope":"project","fact":"use tabs for indentation"}]}';
-  const { captured } = await loadPlugin({ memoryMode: "smart" }, { text: durableText });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析" } });
-  fire(s, captured, "tool/result", { content: "x" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const mem = join(ws, ".deepseek-harness/MEMORY.md");
-  const memText = existsSync(mem) ? readFileSync(mem, "utf8") : "";
-  // v1.4.1：durable 条目不再带 [smart] 标签（写侧停拼 + 防御性剥除）
-  assert(memText.includes("- use tabs for indentation"), "[S4] durable fact written to MEMORY.md without [smart] tag");
-  assert(!memText.includes("[smart]"), "[S4] no [smart] tag leaked to MEMORY.md");
-  const count = (memText.match(/- use tabs for indentation/g) || []).length;
-  assert(count === 1, "[S4] durable deduplicated to 1");
-}
-
-// ---------- 场景 S5：智能模式 → 增量摘要（第二次只含新事件） ----------
-console.log("[S5] SMART MODE → incremental (2nd call only new events)");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s5-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "第一轮请求" } });
-  fire(s, captured, "tool/result", { content: "r1" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  assert(mockLlm.calls.length >= 1, "[S5] first settle called llm");
-  const firstLen = mockLlm.calls[0].messages.length;
-  fire(s, captured, "user/message", { message: { content: "第二轮请求" } });
-  fire(s, captured, "tool/result", { content: "r2" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  assert(mockLlm.calls.length >= 2, "[S5] second settle called llm again");
-  const secondMsgs = mockLlm.calls[mockLlm.calls.length - 1].messages;
-  const secondLen = secondMsgs.length;
-  assert(secondLen < firstLen + 2, "[S5] second call has fewer messages (incremental)");
-  const joined = msgsText({ messages: secondMsgs });
-  assert(!joined.includes("第一轮请求"), "[S5] second call does not repeat first-round content");
-  assert(joined.includes("第二轮请求"), "[S5] second call contains new content");
-}
-
-// ---------- 场景 S6：智能模式 → LLM 失败降级轻量条目（不抛、不丢记忆） ----------
-console.log("[S6] SMART MODE → LLM failure falls back to light entry");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s6-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" }, { fail: true });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "分析" } });
-  fire(s, captured, "tool/result", { content: "x" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[S6] daily written despite llm failure");
-  const text = readFileSync(daily, "utf8");
-  assert(text.includes("分析"), "[S6] fallback light entry keeps raw text");
-  assert(mockLlm.calls.length >= 1, "[S6] llm attempted");
-}
-
-// ---------- 场景 S7：智能模式 → 防闲聊闸门（纯闲聊不调 LLM、不写） ----------
-console.log("[S7] SMART MODE → chitchat gate: no LLM call");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s7-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart" });
-  const s = fakeSession(ws);
-  fire(s, captured, "user/message", { message: { content: "hello" } });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  assert(mockLlm.calls.length === 0, "[S7] no LLM call on chitchat");
-  assert(!existsSync(dailyFile(ws)), "[S7] no daily written on chitchat");
-}
-
-// ---------- 场景 W：本地日期写入 + runtime-context 噪声剥离 ----------
-console.log("[W] local-date daily file + runtime-context noise stripped");
+// ---------- 场景 W：turn/end → 记忆子代理接线（v1.8.0 唯一写入路径）+ 口径保留 ----------
+console.log("[W] turn/end wires to the memory sub-agent + text-extraction口径 kept");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-w-"));
-  const { captured } = await loadPlugin();
+  const { captured, mockLlm } = await loadPlugin();
   const s = fakeSession(ws);
-  // assistant 消息：真机形态下 runtime-context 是独立 text block，真实回复是另一个 block
-  fire(s, captured, "assistant/message", {
-    message: { content: [
-      { type: "text", text: "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent DSH file policy: workspace-write." },
-      { type: "text", text: "已完成统计" },
-    ] },
-  });
-  fire(s, captured, "tool/result", { content: "done" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  const daily = dailyFile(ws);
-  assert(existsSync(daily), "[W] daily written to LOCAL-date file");
-  const text = readFileSync(daily, "utf8");
-  assert(!text.includes("Current runtime context"), "[W] runtime-context noise stripped");
-  assert(text.includes("已完成统计"), "[W] real assistant text kept");
-}
-
-// ---------- 场景 S8：调试模式开 → 自动蒸馏（会话）输出 [debug] 诊断 ----------
-console.log("[S8] DEBUG LOG ON → session distill diagnostics");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s8-"));
-  const { captured, mockLlm } = await loadPlugin({ memoryMode: "smart", distillDebugLog: true });
-  const s = fakeSession(ws);
-  const errs = [];
-  const origErr = console.error;
-  console.error = (...a) => errs.push(a.map(String).join(" "));
   fire(s, captured, "user/message", { message: { content: "分析仓库结构" } });
-  fire(s, captured, "tool/result", { content: "src/index.mjs" });
+  fire(s, captured, "tool/result", { content: "src/x" });
   fire(s, captured, "turn/end", {});
   await sleep(1800);
-  console.error = origErr;
-  assert(mockLlm.calls.length >= 1, "[S8] llm called (functionality intact)");
-  assert(errs.some((e) => e.includes("[memory-palace][debug]")), "[S8] debug tag emitted");
-  assert(errs.some((e) => e.includes("resolveModel")), "[S8] resolveModel logged");
-  assert(errs.some((e) => e.includes("session core entry")), "[S8] session core entry logged");
-  assert(errs.some((e) => e.includes("session stream done")), "[S8] session stream done logged");
-  assert(errs.some((e) => e.includes("session write done")), "[S8] session write done logged");
-}
+  assert(mockLlm.calls.length >= 1, "[W] turn/end 触发记忆子代理（唯一写入路径，旧 plugin/smart 已删）");
+  const call = mockLlm.calls[0] || {};
+  assert(call.provider === "deepseek" && call.model === "deepseek-chat",
+    "[W] 未配 summaryModel 时复用会话 provider/model");
+  assert(String(call.system || "").includes("记忆子代理"), "[W] 子代理 system prompt 就位");
 
-// ---------- 场景 S8b：调试模式开 → 项目蒸馏（按钮）输出 [debug] 诊断 ----------
-console.log("[S8b] DEBUG ON → project distill diagnostics");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s8b-"));
-  const memFile = join(ws, ".deepseek-harness", "MEMORY.md");
-  const fsMod = await import("node:fs/promises");
-  const pathMod = await import("node:path");
-  await fsMod.mkdir(pathMod.dirname(memFile), { recursive: true });
-  await fsMod.writeFile(memFile, "# 项目记忆\n- 旧事实一\n- 旧事实二\n", "utf8");
-  const mockLlm = makeMockLlm({ text: "## 蒸馏后\n- 事实 A\n- 事实 B\n" });
-  const ctx8 = new Context();
-  ctx8.provide("llm", mockLlm);
-  const cfg = { ...BASE, distillDebugLog: true, enabled: true };
-  const state8 = { activeCwd: ws };
-  const paths8 = createPaths(() => cfg, () => ws);
-  const records8 = createRecords({ getConfig: () => cfg, paths: paths8 });
-  const distill8 = createDistill({ ctx: ctx8, getConfig: () => cfg, paths: paths8, records: records8, state: state8 });
-  const s = fakeSession(ws);
-  const errs = [];
-  const origErr = console.error;
-  console.error = (...a) => errs.push(a.map(String).join(" "));
-  const r = await distill8.distillProjectMemory(ws, s);
-  console.error = origErr;
-  assert(r.ok, "[S8b] project distill succeeded");
-  assert(errs.some((e) => e.includes("[memory-palace][debug]")), "[S8b] debug tag emitted");
-  assert(errs.some((e) => e.includes("project request")), "[S8b] project request logged");
-  assert(errs.some((e) => e.includes("project write done")), "[S8b] project write done logged");
-  const memText = readFileSync(memFile, "utf8");
-  assert(memText.includes("事实 A"), "[S8b] MEMORY.md updated by distill");
-}
-
-// ---------- 场景 S9：调试模式关 → 无 [debug]，但失败留痕 [distill skip:] 仍在 ----------
-console.log("[S9] DEBUG OFF → no [debug], failure skip retained");
-{
-  const ws = mkdtempSync(join(tmpdir(), "mem-s9-"));
-  const { captured } = await loadPlugin({ memoryMode: "smart", distillDebugLog: false }, { fail: true });
-  const s = fakeSession(ws);
-  const errs = [];
-  const origErr = console.error;
-  console.error = (...a) => errs.push(a.map(String).join(" "));
-  fire(s, captured, "user/message", { message: { content: "分析" } });
-  fire(s, captured, "tool/result", { content: "x" });
-  fire(s, captured, "turn/end", {});
-  await sleep(1800);
-  console.error = origErr;
-  assert(!errs.some((e) => e.includes("[memory-palace][debug]")), "[S9] no [debug] lines when off");
-  assert(errs.some((e) => e.includes("[memory-palace] distill skip:")), "[S9] failure skip line retained");
+  // 口径保留：turnBuffer 的文本提取必须剥离 runtime-context 快照块（供工具期错误检测，防误命中）。
+  const { extractText } = await import("../lib/common/text.mjs");
+  const noisy = extractText({ data: { message: { content: [
+    { type: "text", text: "Current runtime context. This snapshot supersedes earlier runtime-context snapshots." },
+    { type: "text", text: "已完成统计" },
+  ] } } });
+  assert(!noisy.includes("Current runtime context"), "[W] runtime-context 快照块被剥离");
+  assert(noisy.includes("已完成统计"), "[W] 真实助手文本保留");
 }
 
 // ---------- 场景 P：计划模式禁写记忆（硬默认，无开关） ----------
@@ -900,38 +562,27 @@ console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt
   assert((await gate({ name: "memory_delete", arguments: { match: "x", level: "project" } }, next)).kind === "deny", "[P2] plan: memory_delete preview denied");
   assert((await gate({ name: "memory_delete", arguments: { match: "x", level: "project", confirm: true } }, next)).kind === "deny", "[P2] plan: memory_delete confirm denied");
 
-  // P3：plugin 模式 turn/end 在 plan 下不写日志
+  // P3：plan 模式下 turn/end 不触发记忆子代理（_settle 顶部拦截）
   const ws3 = mkdtempSync(join(tmpdir(), "mem-p3-"));
-  const { captured: cap3 } = await loadPlugin();
+  const { captured: cap3, mockLlm: ml3 } = await loadPlugin();
   const s3 = fakeSession(ws3);
   fire(s3, cap3, "plan/mode", { active: true });
   fire(s3, cap3, "user/message", { message: { content: "分析仓库结构" } });
   fire(s3, cap3, "tool/result", { content: "src/x" });
   fire(s3, cap3, "turn/end", {});
   await sleep(1800);
-  assert(!existsSync(dailyFile(ws3)), "[P3] plan: no daily log written (auto write blocked)");
+  assert(ml3.calls.length === 0, "[P3] plan: memory sub-agent not invoked (write blocked at _settle)");
 
-  // P4：smart 模式 turn/end 在 plan 下不调 LLM（自动蒸馏被 _settle 早返回拦截）
-  const ws4 = mkdtempSync(join(tmpdir(), "mem-p4-"));
-  const { captured: cap4, mockLlm: ml4 } = await loadPlugin({ memoryMode: "smart" });
-  const s4 = fakeSession(ws4);
-  fire(s4, cap4, "plan/mode", { active: true });
-  fire(s4, cap4, "user/message", { message: { content: "分析" } });
-  fire(s4, cap4, "tool/result", { content: "x" });
-  fire(s4, cap4, "turn/end", {});
-  await sleep(1800);
-  assert(ml4.calls.length === 0, "[P4] plan: smart auto-distill not called (blocked at _settle)");
-
-  // P5：plan 关闭后行为正常（回归，不破坏写盘）
+  // P5：plan 关闭后写入路径恢复正常（回归）
   const ws5 = mkdtempSync(join(tmpdir(), "mem-p5-"));
-  const { captured: cap5 } = await loadPlugin();
+  const { captured: cap5, mockLlm: ml5 } = await loadPlugin();
   const s5 = fakeSession(ws5);
   fire(s5, cap5, "plan/mode", { active: false });
   fire(s5, cap5, "user/message", { message: { content: "分析仓库结构" } });
   fire(s5, cap5, "tool/result", { content: "src/x" });
   fire(s5, cap5, "turn/end", {});
   await sleep(1800);
-  assert(existsSync(dailyFile(ws5)), "[P5] plan=false: daily log written again (no regression)");
+  assert(ml5.calls.length >= 1, "[P5] plan=false: memory sub-agent invoked again (no regression)");
 
   // P6：plan 下 memory_read 仍可用（仅禁写不禁读）
   const ws6 = mkdtempSync(join(tmpdir(), "mem-p6-"));
@@ -960,7 +611,7 @@ console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt
   const state7 = { activeCwd: ws7, planModeActive: true };
   const paths7 = createPaths(() => cfg7, () => ws7);
   const records7 = createRecords({ getConfig: () => cfg7, paths: paths7 });
-  const distill7 = createDistill({ ctx: ctx7, getConfig: () => cfg7, paths: paths7, records: records7, state: state7 });
+  const distill7 = createDistill({ ctx: ctx7, getConfig: () => cfg7, paths: paths7, records: records7 });
   const s7 = fakeSession(ws7);
   const r7 = await distill7.distillProjectMemory(ws7, s7);
   assert(r7.ok, "[P7] plan: manual distill still writes (exempt)");

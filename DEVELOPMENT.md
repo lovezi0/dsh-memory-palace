@@ -7,18 +7,18 @@ dsh-memory-palace/
 ├── src/
 │   ├── index.mjs              # 插件后端入口（cordis 插件：name/Config/inject/apply，薄装配层：闭包运行时 + 工厂装配）
 │   ├── common/                # 纯函数与常量（零状态，可独立单测）
-│   │   ├── prompts.mjs        #   SCENE_KEYWORDS / SUMMARY_PROMPT / DISTILL_PROMPT
+│   │   ├── prompts.mjs        #   SUMMARY_PROMPT / DISTILL_PROMPT（v1.8.0 起无 SCENE_KEYWORDS）
 │   │   ├── text.mjs           #   todayISO / nowStamp / budgetClip / blockText / extractText / stripDeletedLines 等
 │   │   ├── paths.mjs          #   createPaths 工厂（buddyDirs / writeDirs / memoryFileOf，cwd 参数化）
 │   │   ├── records.mjs        #   createRecords 工厂 + appendLineDedup / findMatches / prune 等
 │   │   ├── sections.mjs       #   章节纯函数：parse/locate/append/upsert/create/replace/markEntryDeleted（hybrid 用）
 │   │   └── retry.mjs          #   蒸馏 LLM 失败重试：classifyFailure / backoffDelayMs / runWithRetry（纯函数，可单测）
-│   ├── hybrid/                # 混合模式独立模块（memoryMode === "hybrid" 时由 index.mjs 装配，互不影响 plugin/smart）
+│   ├── hybrid/                # 记忆子代理独立模块（v1.8.0 起为唯一写入路径，由 index.mjs 无条件装配）
 │   │   ├── index.mjs          #   模块入口 registerHybrid（注册工具 + 闸门，返回 runMemorySubagent）
 │   │   ├── prompts.mjs        #   HYBRID_PROACTIVE（注入段二）/ SUBAGENT_SYSTEM（子代理 system prompt）
 │   │   ├── subagent.mjs       #   记忆子代理：ctx.llm.stream + tools 自建工具循环（log_read_section/log_write_ops）
 │   │   └── tools.mjs          #   memory_write / memory_update_section / memory_reorganize + pre-execute 闸门
-│   ├── distill.mjs            # 蒸馏核心：distillSessionCore / summarizeTurn / distillProjectMemory（乐观锁 + 原子覆盖）
+│   ├── distill.mjs            # 蒸馏核心：distillSessionCore / distillProjectMemory（乐观锁 + 原子覆盖）
 │   ├── tools.mjs              # 四个记忆工具（memory_note / _user / _read / _delete）+ pre-execute 删除确认闸门
 │   ├── api.mjs                # /memory-palace/api route（设置读写 + 手动蒸馏，HTTP trust-fence）
 │   └── client/                # 前端 client 源码（build 按序零依赖拼接为 lib/client.js 单 bundle）
@@ -64,21 +64,21 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 - **不引入 `dsh-storage`**：其 JSON 落地与"记忆必须可读的 Markdown"这一核心价值冲突，刻意排除。
 - **设置页折叠卡片只能手写**：宿主 `ui-settings-plugins` 的 `PluginCard` 是「name 叠在 description 上」的竖向卡片；宿主导出的可复用组件 `DisclosureRow`（`ui-primitives`）是**横向 24px 紧凑行**，布局不同（宿主 README 亦明确区分二者）。且本包 client 只 `require("react")`（平台 seed 表），不引宿主图标包。故样式逐值照抄 `PluginCard.module.css`，chevron 用 data URI 内联 SVG。折叠态是 card-local 的纯前端 `useState`、**不持久化**（「用户打开哪张卡」是一次阅读手势），保存成功后自动收起。
 
-## 混合模式（hybrid）要点
+## 记忆子代理（原 hybrid）要点
 
-- **模块边界**：`src/hybrid/` 独立模块，仅 `memoryMode === "hybrid"` 时由 `index.mjs` 装配（切换需重启 dsh——注册时机安全）。不改动 `distill.mjs` / `tools.mjs` / `api.mjs` 及 plugin/smart 全部行为。
+- **模块边界**：`src/hybrid/` 独立模块（v1.8.0 起为唯一写入路径，plugin / smart 已删除），由 `index.mjs` **无条件装配**（apply 同步段读不到热配置，条件注册会踩「配置启用但未注册」的坑）。不改动 `distill.mjs` / `tools.mjs` / `api.mjs` 的手动蒸馏与记忆工具行为。
 - **记忆子代理 = 自建工具循环**：`ctx.llm.stream` 原生支持 `GenerateOptions.tools`（`finish.kind === 'tool-calls'` 时用 `BlockAssembler.message()` 回喂 assistant 消息 + `createToolResultMessage` 回喂工具结果）——无需 `ctx.subagents`（其要求活 Agent 作父，插件不可用）。循环白名单仅 `log_read_section` / `log_write_ops`。
 - **章节化核心**：`src/common/sections.mjs` 纯函数（parse/locate/append/upsert/create/replace/markEntryDeleted）驱动日志 ops 与 MEMORY.md 工具；`replaceSectionText` 整章节归一化精确匹配防 stale，并**保留章节间分隔空行**。
-- **reorganize 双门禁**：`checkReorgGate`（`src/hybrid/tools.mjs`）机器校验「超出 `workspaceBudgetChars` 且距上次重整 ≥ `reorgCooldownDays`」；时间戳 `<!-- memory-palace:last-reorg:... -->` 由机器读写落 MEMORY.md 文件尾；pre-execute 确认弹窗 + execute 复核双重防线，原子替换沿 distillProjectMemory 的 cover/备份/rename 模式。
-- **hybrid 下日志永不过期**：`records.prune()` 对 hybrid 直接返回（`dailyLogRetentionDays` 不可用，日志作为子代理维护的证据层保留）。
+- **reorganize 双门禁**：`checkReorgGate`（`src/hybrid/tools.mjs`）机器校验「超出 `workspaceBudgetChars` 且距上次重整 ≥ `reorgCooldownDays`」（阈值刻意 = 注入预算：**超出注入预算 = 该重整了**；门禁只看 `writeDirs[0]` 的主目标 MEMORY.md，buddy 目录那份不参与判定）；时间戳 `<!-- memory-palace:last-reorg:... -->` 由机器读写落 MEMORY.md 文件尾；pre-execute 确认弹窗 + execute 复核双重防线，原子替换沿 distillProjectMemory 的 cover/备份/rename 模式。
+- **日志永不过期**：日志作为子代理维护的证据层保留，v1.8.0 起 `records.prune()` 与 `dailyLogRetentionDays` 配置一并删除。
 - **写入并发**：子代理日志落盘经模块级 promise 链（`withLogLock`）串行化，防与手动蒸馏按钮并发覆盖。
 - **多章节读取（A 改进）**：`log_read_section` 接受 `sections: string[]`，一次读取多个章节合并返回（未找到的注明）；prompt 强制要求多章节单次传齐（C 改进），避免多轮往返。目录模式典型流程 2-3 轮即可完成。
-- **失败不降级**：子代理超 6 轮 / 超时 / 模型不支持 tools → 本轮放弃，**不写 `writeLightEntry`**（无格式原文会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。`writeLightEntry` 仍被 plugin/smart 模式使用。
+- **失败不降级**：子代理超 6 轮 / 超时 / 模型不支持 tools → 本轮放弃，**不写任何轻量原文**（会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。
 - **踩坑**：`node:fs` 的 `writeFile`/`mkdir` 是 callback 版，`await` 会抛 `ERR_INVALID_CALLBACK` 被 catch 吞掉导致静默不落盘——写文件一律用 `node:fs/promises`。
 
 ### 调用时序
 
-![混合模式（hybrid）调用时序](./assets/hybrid-sequence.svg)
+![记忆子代理调用时序](./assets/hybrid-sequence.svg)
 
 ## 记忆注入通道
 
@@ -172,7 +172,7 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 
 读写顺序**刻意不对称**：dsh 原生记忆必须可被读到（否则与 buddy 目录共存时静默失效），而写入仍以 buddy 目录为首选（兼容 WB/CB 原生格式）。
 
-## 智能模式蒸馏 —— 失败重试
+## 蒸馏 —— 失败重试
 
 蒸馏（会话摘要 `distillSessionCore` + 项目记忆 `distillProjectMemory`）的 LLM 调用经 `src/common/retry.mjs` 的 `runWithRetry` 包裹，单次尝试由 `distill.mjs` 内的 `streamOnce` 负责（每次新建独立 `AbortSignal`，避免单次超时耗尽累计预算）。
 

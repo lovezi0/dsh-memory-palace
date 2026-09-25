@@ -18,39 +18,44 @@
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 自定义指令内容 | `customInstructions` | `""`（空=不注入） | 非空时经系统提示词注入，位置在「记忆插件 prompt → 记忆分工 prompt」**之后**。用于承载不适合写进用户记忆的特殊指令。对全部会话与三种记忆模式生效，保存后无需重启 |
+| 自定义指令内容 | `customInstructions` | `""`（空=不注入） | 非空时经系统提示词注入，位置在「记忆插件 prompt → 记忆分工 prompt」**之后**。用于承载不适合写进用户记忆的特殊指令。对全部会话生效，保存后无需重启 |
 
 > **为什么走 system prompt 而非写进记忆**：它是恒定内容（用户配置一次不变），放 system 零缓存成本；记忆正文属易变内容，走 E 投影（见 DEVELOPMENT.md「记忆注入通道」）。
 
-## 自动记录（设置页「记忆 → 自动记录」卡片）
+## 记忆写入（设置页「记忆 → 记忆写入」卡片）
+
+> **v1.8.0 破坏性变更**：`memoryMode`（插件 / 智能 / 混合三模式）、`autoCaptureErrors`、`summarize`（记忆写入总开关）与 `dailyLogRetentionDays` 均已删除。
+>
+> **写入恒定进行 —— 插件装上并启用即视为记忆写入启用**，没有独立的写入开关。停写只剩两条路：
+> ① `enabled: false`（profile config 级停用，需在 `cordis.patch.yml` 里设，设置页不暴露）；
+> ② 命中 `silentPresets`（会话预设级静默，见「核心」卡片）。
+> 关闭记忆工具（`memory_write` 等）由 `silentPresets` 的工具掩码与 `enabled` 兜底负责，不再由总开关控制。
+>
+> 旧 profile 里若仍写着这些键，作为未知键原样透传、静默失效。
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 记忆模式 | `memoryMode` | `hybrid` | 三种互斥模式（切换需重启 dsh 生效）：`plugin`=记忆公民指令+轮次轻量+错误捕获；`smart`=LLM 智能会话摘要（summary→每日日志 + durable→MEMORY.md）；`hybrid`=记忆子代理自动维护今日日志（章节化、标删去重）+ agent 主动维护 MEMORY.md（章节化写入、整章节替换、门禁内全量重整）（**默认**） |
-| 轮次结束自动记录 | `summarize` | `true` | 插件模式下：它是「agent 主动记忆」主路径失效时的安全网，保证实质工作不丢，代价是只留原始文本、不做总结。智能模式下该开关仍为总闸门 |
-| 摘要模型 | `summaryModel` | `""`（空=复用当前会话模型） | 智能模式专用：留空自动复用当前会话 provider/model；可选已配置的模型|
-| 对话出错自动记录 | `autoCaptureErrors` | `true` | 插件模式下：自动捕获 in-session 错误并写入「错误现象」到对应 MEMORY.md；「根因/方案」由 agent 主动记；智能模式下错误由 LLM 摘要统一提炼 |
-| 摘要最大输出 Token | `summaryMaxTokens` | `2000` | 智能模式专用：**最终输出软预算**（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。过小会让模型在 prompt 内收敛不够、durable 事实被挤；可上调以容纳更多 durable 事实。**仅「智能模式」下显示** |
-| 蒸馏最大输出 Token | `projectMaxTokens` | `8000` | 智能模式专用：**最终输出软预算**（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。手动「蒸馏项目记忆」LLM 的成稿长度预算；过小会让模型在 prompt 内收敛不够。可上调。**仅「智能模式」下显示** |
-| 蒸馏时回喂存量记忆 | `feedbackEnabled` | `false` | 智能模式专用：开启后把项目级+用户级 MEMORY.md 全文（逐行编号、无截断）回喂 LLM 做增量维护；自动与手动均回喂，delete 仅手动按钮开放、自动模式跳过防误删。**仅「智能模式」下显示**（hybrid 下不参与——子代理自带日志回喂） |
-| 重整冷却(天) | `reorgCooldownDays` | `7` | 混合模式专用：项目级 MEMORY.md 全量重整的冷却天数（距上次重整）；与「超出注入预算」双条件**同时满足**才允许 `memory_reorganize`；时间戳以 HTML 注释落在 MEMORY.md 文件尾。**仅「混合模式」下显示** |
-| 子代理日志回喂预算(字符) | `subagentLogBudget` | `20000` | 混合模式专用：记忆子代理回喂今日工作日志的字符上限；超出时仅回喂章节目录，子代理用 `log_read_section` 按需读取章节。**仅「混合模式」下显示** |
+| 模型 | `summaryModel` | `""`（空=复用当前会话模型） | 手动「蒸馏会话 / 蒸馏项目记忆」与记忆子代理共用。留空自动复用当前会话 provider/model；也可填已配置的模型固定廉价小模型省 token |
+| 会话蒸馏最大输出 Token | `summaryMaxTokens` | `2000` | **最终输出软预算**（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。过小会让 durable 事实被挤；可上调 |
+| 项目蒸馏最大输出 Token | `projectMaxTokens` | `8000` | **最终输出软预算**（prompt 约束，思考不受限）。手动「蒸馏项目记忆」LLM 的成稿长度预算；可上调 |
+| 蒸馏时回喂存量记忆 | `feedbackEnabled` | `false` | 开启后把项目级+用户级 MEMORY.md 全文（逐行编号、无截断）回喂 LLM 做增量维护。**仅手动蒸馏生效**（`delete` 仅手动按钮开放）；自动路径走记忆子代理、自带日志回喂，不受此项影响 |
+| 重整冷却(天) | `reorgCooldownDays` | `7` | 项目级 MEMORY.md 全量重整的冷却天数（距上次重整）；与「超出注入预算」双条件**同时满足**才允许 `memory_reorganize`；时间戳以 HTML 注释落在 MEMORY.md 文件尾 |
+| 子代理日志回喂预算(字符) | `subagentLogBudget` | `20000` | 记忆子代理回喂今日工作日志的字符上限；超出时仅回喂章节目录，子代理用 `log_read_section` 按需读取章节 |
 
 ## 存储路径与预算（设置页「记忆 → 存储路径与预算」卡片）
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
 | 用户级记忆路径 | `userMemoryPath` | `~/.deepseek-harness/MEMORY.md` | 用户级记忆文件路径（支持 `~` 展开） |
-| 工作区记忆目录 | `workspaceMemoryDir` | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录 |
-| 日志保留天数 | `dailyLogRetentionDays` | `30` | 每日日志保留天数，过期迁移进 `MEMORY.md`。**混合模式下不可用**（hybrid 日志永不过期不删，作为子代理维护的证据层保留） |
-| 用户级记忆字数上限 | `userBudgetChars` | `4000` | 用户级记忆的注入 / E 投影长度上限（字符） |
-| 工作区级记忆字数上限 | `workspaceBudgetChars` | `3000` | 工作区记忆与**今日日志**的注入 / E 投影长度上限（字符）；同时用作 `memory_read` 读日志时的截断预算 |
+| 工作区记忆目录 | `workspaceMemoryDir` | `.deepseek-harness/memory` | 无 buddy 目录时回退的项目记忆目录。**日志永不过期不删**（证据层），v1.8.0 起无保留天数配置 |
+| 用户级记忆字数上限 | `userBudgetChars` | `8000` | 用户级 `MEMORY.md` 经 **E 投影**注入时的长度上限（字符）；`budgetClip` 保留全部结构行 + 从尾部往前填内容行（最新优先）。⚠️ **是「每个文件各自」的上限，不是所有记忆文件合计的总量上限** |
+| 工作区级记忆字数上限 | `workspaceBudgetChars` | `6000` | **一身三职**（同一个数值同时用于三处）：① 项目级 `MEMORY.md` 的 E 投影上限；② **今日工作日志**的 E 投影上限 —— ①②各自独立截断、互不挤占；③ **项目记忆重整门禁阈值**（`size > 本值` 才允许重整）+ `memory_read` 读日志时的**每块**截断预算。⚠️ 同样是「每个文件各自」的上限：<br>**注入份数** = 用户级 1 + 项目级 MEMORY.md（dsh 原生 + dsh 旧嵌套 + 每个已存在 buddy 目录各 1，**最多 4**）+ 今日日志（dsh + 每个 buddy 目录各 1，**最多 3**）→ 实测最坏 **8 条消息 ≈ 5 万字符 = 本值的 7.1 倍**；常态（单目录）为 2 个文件 ≈ 2 倍。<br>调大它 = 同时放宽注入量与重整触发线（刻意保持一致：超出注入预算 = 该重整了） |
 
 ## 开发（设置页「记忆 → 开发」卡片）
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖智能模式摘要与手动蒸馏两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
+| 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖手动蒸馏与记忆子代理两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
 | 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。info 级别仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；配合 `distillLogLevel=debug`（见下）会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障。平时关闭 |
 | 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置（dsh 0.1.7 起 settings.yaml 已被宿主移除并一次性导入 profile）。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
 
@@ -62,8 +67,8 @@
 > - id: memory-palace
 >   name: 'dsh-memory-palace'
 >   config:
->     memoryMode: smart
 >     summaryModel: ''
+>     subagentLogBudget: 20000
 > ```
 >
 > 修改后重启 dsh 生效。

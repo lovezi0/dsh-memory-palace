@@ -3,7 +3,7 @@
 // 经 registerTools 注入 ctx/config/paths/运行时状态；在 index.mjs 装配时调用一次。
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { join } from "node:path";
-import { todayISO, isoDaysAgo, expandHome, toHomeShort, readMdSync, budgetClip } from "./common/text.mjs";
+import { todayISO, isoDaysAgo, expandHome, toHomeShort, readMdSync, budgetClip, stripDeletedLines } from "./common/text.mjs";
 import { appendLineDedup, findMatches, removeLineByMatch, recentLogDates } from "./common/records.mjs";
 
 /**
@@ -94,7 +94,6 @@ export function registerTools({ ctx, getConfig, paths, state }) {
         render: (_args, value) => [{ type: "text", text: value?.message ?? "Saved." }],
       },
       async execute(args, exec) {
-        state.recentAgentWrote = true;
         if (!cfg().enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
         const cwd = sessionCwd(exec);
         const dirs = paths.writeDirs(cwd);
@@ -146,7 +145,6 @@ export function registerTools({ ctx, getConfig, paths, state }) {
         render: (_args, value) => [{ type: "text", text: value?.message ?? "Saved." }],
       },
       async execute(args) {
-        state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
         try {
@@ -245,7 +243,11 @@ export function registerTools({ ctx, getConfig, paths, state }) {
               const t = readMdSync(join(dir, `${day}.md`));
               if (!t) continue;
               const label = n === 0 ? "今日" : n === 1 ? "昨日" : "前日";
-              blocks.push(`# ${label}工作日志 (${day} @ ${dirShort})\n${budgetClip(t, c.workspaceBudgetChars)}`);
+              // v1.8.0-alpha.1 修复（D2）：日志 scope 先剥删除线墓碑再裁剪——墓碑对日志阅读是
+              // 纯噪声（实测 79 有效+42 墓碑 → 返回 51+14，28 条有效被墓碑挤掉）。注意
+              // memory/project scope 刻意**保留**墓碑不过滤：memory_update_section 的 replace
+              // 模式要求 oldText 与磁盘含墓碑逐字一致，过滤会让 stale 校验永远失败。
+              blocks.push(`# ${label}工作日志 (${day} @ ${dirShort})\n${budgetClip(stripDeletedLines(t), c.workspaceBudgetChars)}`);
             }
           }
           if (!blocks.length) {
@@ -335,7 +337,6 @@ export function registerTools({ ctx, getConfig, paths, state }) {
           [{ type: "text", text: value?.confirmPrompt || value?.message || (value?.preview ? "Preview only — no deletion performed." : "Deleted.") }],
       },
       async execute(args, exec) {
-        state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) {
           return { ok: false, preview: false, level: args.level || "user", removed: 0, matches: [], details: [], message: "memory-palace is currently disabled in settings.", confirmPrompt: "" };

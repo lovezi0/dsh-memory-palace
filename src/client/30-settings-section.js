@@ -442,37 +442,18 @@
             }), "customInstructions")
         ]),
         card("smartSummary", t("smartSummary"), t("smartSummaryDesc"), [
-          // 轮次结束自动记录(summarize)：三种记忆模式的共用总闸门，始终显示，置于记忆模式之上、不随模式切换隐藏。
-          toggle(t("summarizeLabel"), t("summarizeHint"), "summarize"),
-          row(t("memoryModeLabel"),
-            draft.memoryMode === "smart"
-              ? t("memoryModeHintSmart")
-              : draft.memoryMode === "hybrid"
-                ? t("memoryModeHintHybrid")
-                : t("memoryModeHintPlugin"),
-            h("select", {
-              value: ["plugin", "smart", "hybrid"].includes(draft.memoryMode) ? draft.memoryMode : "hybrid",
-              disabled,
-              onChange: (e) => edit("memoryMode", e.target.value),
-              style: selectStyle
-            }, [
-              h("option", { value: "plugin" }, "插件模式"),
-              h("option", { value: "smart" }, "智能模式"),
-              h("option", { value: "hybrid" }, "混合模式")
-            ]), "memoryMode"),
-          draft.memoryMode === "hybrid"
-            ? h("div", null, [
-                row(t("reorgCooldownLabel"), t("reorgCooldownHint"), h("input", num("reorgCooldownDays")), "reorgCooldownDays"),
-                row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
-              ])
-            : draft.memoryMode === "plugin"
-              ? h("div", null, [
-                  toggle(t("autoCaptureErrorsLabel"), t("autoCaptureErrorsHint"), "autoCaptureErrors")
-                ])
-              : null,
-          // ---- v1.6.3：蒸馏/模型参数提为常显（三模式共用，不受 memoryMode 限制）----
-          // summaryModel 同时被智能摘要与 hybrid 记忆子代理读取（subagent resolveModel）；
-          // summaryMaxTokens/projectMaxTokens/feedbackEnabled 覆盖自动摘要 + 手动蒸馏两条链路。
+          // ---- v1.8.0：本卡片内三处删除已落地——① 记忆写入总开关：写入恒定进行，停写只剩
+          // profile config 的 enabled=false 与静默预设（silentPresets，见「核心」卡片）；
+          // ② 记忆模式下拉与模式条件块（随原 plugin / smart 两模式删除）；
+          // ③ 错误自动记录、日志保留天数两项配置。
+          // 记忆子代理参数提为常显（先前包在 hybrid 条件块里）。
+          // 注意：本注释刻意不写已删配置的 key 字面量——client-smoke 有源码级负向断言守着。
+          h("div", null, [
+            row(t("reorgCooldownLabel"), t("reorgCooldownHint"), h("input", num("reorgCooldownDays")), "reorgCooldownDays"),
+            row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
+          ]),
+          // ---- v1.6.3：蒸馏/模型参数常显（v1.8.0 起 summaryModel 只被手动蒸馏与记忆子代理读取）----
+          // summaryMaxTokens/projectMaxTokens/feedbackEnabled 覆盖「蒸馏会话」+「蒸馏项目记忆」两条手动链路。
           h("div", null, [
             row(t("summaryModelLabel"), t("summaryModelHint"),
               h("select", {
@@ -494,7 +475,7 @@
         card("storage", t("storage"), t("storageDesc"), [
           row(t("userPathLabel"), t("userPathHint"), h("input", { ...num("userMemoryPath"), type: "text" }), "userMemoryPath"),
           row(t("wsDirLabel"), t("wsDirHint"), h("input", { ...num("workspaceMemoryDir"), type: "text" }), "workspaceMemoryDir"),
-          row(t("retentionLabel"), draft.memoryMode === "hybrid" ? t("retentionHintHybrid") : t("retentionHint"), h("input", num("dailyLogRetentionDays")), "dailyLogRetentionDays"),
+          // ---- v1.8.0：日志保留天数配置已删除 —— 日志由记忆子代理维护、永不过期不删 ----
           row(t("userBudgetLabel"), t("userBudgetHint"), h("input", num("userBudgetChars")), "userBudgetChars"),
           row(t("wsBudgetLabel"), t("wsBudgetHint"), h("input", num("workspaceBudgetChars")), "workspaceBudgetChars")
         ]),

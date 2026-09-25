@@ -14,13 +14,9 @@ const BASE = {
   enabled: true,
   userMemoryPath: "~/.deepseek-harness/MEMORY.md",
   workspaceMemoryDir: ".deepseek-harness/memory",
-  dailyLogRetentionDays: 30,
   userBudgetChars: 4000,
   workspaceBudgetChars: 3000,
-  summarize: true,
-  memoryMode: "plugin",
   summaryModel: "",
-  autoCaptureErrors: true,
 };
 
 function makeMockLlm(text) {

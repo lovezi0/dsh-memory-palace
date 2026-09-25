@@ -58,6 +58,19 @@ import { budgetClip, stripSmartTag } from "../src/common/text.mjs";
 assert.equal(budgetClip("", 100), "");
 assert.equal(budgetClip(null, 100), null);
 
+// 8.（v1.8.0-alpha.1 修复 D2）中部章节标题不随截断丢失——窗口外结构行按原序列于标记后
+{
+  const lines = ["# 标题", "", "## 章节一", "- 旧1", "## 章节二", "- 旧2", "## 章节三", "- 旧3", "## 章节四", "- 新"];
+  const text = lines.join("\n");
+  const out = budgetClip(text, "- 新".length + 2);
+  for (const h of ["## 章节一", "## 章节二", "## 章节三", "## 章节四"]) {
+    assert.ok(out.includes(h), `中部章节标题应保留：${h}`);
+  }
+  assert.ok(out.includes("已截断"), "应含截断标记");
+  assert.ok(out.endsWith("- 新"), "尾部最新条目应保留");
+  assert.ok(!out.includes("- 旧1") && !out.includes("- 旧2"), "中部内容行仍应裁掉");
+}
+
 // ---------- stripSmartTag ----------
 
 // 1. 单标签剥除，保留列表符

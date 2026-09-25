@@ -113,9 +113,9 @@ export function applyDebugLogLinkage(section) {
 }
 
 /**
- * @param {{ ctx: object, paths: object, distill: object, state: object, getSettingsFace: () => object | null }} deps
+ * @param {{ ctx: object, paths: object, distill: object, getSettingsFace: () => object | null }} deps
  */
-export function registerApi({ ctx, paths, distill, state, getSettingsFace }) {
+export function registerApi({ ctx, paths, distill, getSettingsFace }) {
   ctx.effect(
     () =>
       ctx.webServer.register({
@@ -183,10 +183,8 @@ export function registerApi({ ctx, paths, distill, state, getSettingsFace }) {
                 if (!dirs.length) {
                   throw Object.assign(new Error("no memory dirs for this workspace"), { code: "bad-request", status: 400 });
                 }
-                // 整段会话全量蒸馏（fromSeq=0）；成功后推进增量断点，防智能模式对同段事件重复摘要。
-                // allowDelete:true —— 手动按钮开放 delete 操作（自动智能模式传 false，见 summarizeTurn）。
+                // 整段会话全量蒸馏（fromSeq=0）；allowDelete:true —— 手动按钮开放 delete 操作。
                 const r = await distill.distillSessionCore(session, dirs, 0, { allowDelete: true });
-                if (r.ok && session.id === state.summarySessionId) state.lastSummarizedSeq = session.seq;
                 apiWriteOk(res, r);
                 return;
               }

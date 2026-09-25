@@ -1,5 +1,5 @@
-    const FIELD_NUMERIC = new Set(["dailyLogRetentionDays", "userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "summaryMaxTokens", "projectMaxTokens", "reorgCooldownDays", "subagentLogBudget"]);
-    const FIELD_BOOL = new Set(["bridgeBuddyMemory", "summarize", "autoCaptureErrors", "distillDebugLog", "feedbackEnabled"]);
+    const FIELD_NUMERIC = new Set(["userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "summaryMaxTokens", "projectMaxTokens", "reorgCooldownDays", "subagentLogBudget"]);
+    const FIELD_BOOL = new Set(["bridgeBuddyMemory", "distillDebugLog", "feedbackEnabled"]);
 
     function projectDraft(snap) {
       const v = snap && snap.value ? snap.value : {};
@@ -10,14 +10,10 @@
         silentPresets: Array.isArray(v.silentPresets) ? v.silentPresets.join(", ") : "minimal",
         userMemoryPath: v.userMemoryPath || "~/.deepseek-harness/MEMORY.md",
         workspaceMemoryDir: v.workspaceMemoryDir || ".deepseek-harness/memory",
-        dailyLogRetentionDays: v.dailyLogRetentionDays != null ? String(v.dailyLogRetentionDays) : "30",
-        userBudgetChars: v.userBudgetChars != null ? String(v.userBudgetChars) : "4000",
-        workspaceBudgetChars: v.workspaceBudgetChars != null ? String(v.workspaceBudgetChars) : "3000",
-        summarize: v.summarize === false ? "false" : "true",
-        autoCaptureErrors: v.autoCaptureErrors === false ? "false" : "true",
+        userBudgetChars: v.userBudgetChars != null ? String(v.userBudgetChars) : "8000",
+        workspaceBudgetChars: v.workspaceBudgetChars != null ? String(v.workspaceBudgetChars) : "6000",
         distillDebugLog: v.distillDebugLog === false ? "false" : "true",
         summaryTimeoutMs: v.summaryTimeoutMs != null ? String(Math.round((Number(v.summaryTimeoutMs) || 0) / 1000)) : "60",
-        memoryMode: v.memoryMode || "hybrid",
         summaryModel: v.summaryModel || "",
         summaryMaxTokens: v.summaryMaxTokens != null ? String(v.summaryMaxTokens) : "2000",
         projectMaxTokens: v.projectMaxTokens != null ? String(v.projectMaxTokens) : "8000",

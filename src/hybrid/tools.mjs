@@ -35,7 +35,7 @@ export function readLastReorg(md) {
 export function checkReorgGate(memFile, cfg) {
   const md = readMdSync(memFile);
   const size = md.length;
-  const overBudget = size > (cfg.workspaceBudgetChars || 3000);
+  const overBudget = size > (cfg.workspaceBudgetChars || 6000);
   const last = readLastReorg(md);
   const cooldownMs = (cfg.reorgCooldownDays ?? 7) * 86400000;
   const cooled = Date.now() - last >= cooldownMs;
@@ -49,7 +49,7 @@ export function checkReorgGate(memFile, cfg) {
       ? cooled
         ? "ok"
         : `重整冷却期内（上次重整 ${new Date(last).toLocaleString()}，冷却 ${cfg.reorgCooldownDays ?? 7} 天），请用 memory_update_section 做章节级修正。`
-      : `MEMORY.md 当前 ${size} 字符未超出注入预算（${cfg.workspaceBudgetChars || 3000}），无需重整；请用 memory_write / memory_update_section 维护。`,
+      : `MEMORY.md 当前 ${size} 字符未超出注入预算（${cfg.workspaceBudgetChars || 6000}），无需重整；请用 memory_write / memory_update_section 维护。`,
   };
 }
 
@@ -65,8 +65,8 @@ function sectionHasEntry(md, section, entry) {
 }
 
 /**
- * 注册 hybrid 工具 + pre-execute 闸门。仅在 memoryMode === "hybrid" 时由 index.mjs 调用
- * （memoryMode 切换需重启 dsh——注册时机安全，不存在运行中换挡错配）。
+ * 注册记忆工具（MEMORY.md 章节化写入 / 整章节替换 / 全量重整）+ pre-execute 闸门。
+ * v1.8.0：由 index.mjs 无条件装配（原 hybrid 已成唯一写入路径）。
  * @param {{ ctx: object, getConfig: () => object, paths: object, records: object, state: object }} deps
  */
 export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
@@ -118,7 +118,6 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         render: (_args, value) => [{ type: "text", text: value?.message ?? "Saved." }],
       },
       async execute(args, exec) {
-        state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
         const section = String(args.section ?? "").trim();
@@ -127,28 +126,33 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         const cwd = sessionCwd(exec);
         const target = memFileOf(args.scope === "user" ? "user" : "project", cwd);
         if (!target) return { ok: false, message: "No active workspace." };
-        try {
-          let wrote = 0;
-          let skipped = 0;
-          const files = target.dirs.length ? target.dirs.map((d) => paths.memoryFileOf(d, cwd)) : [target.file];
-          for (const file of files) {
-            const md = readMdSync(file);
-            if (sectionHasEntry(md, section, entry)) {
-              skipped++;
-              continue;
+          try {
+            let wrote = 0;
+            let skipped = 0;
+            let flattened = false;
+            const files = target.dirs.length ? target.dirs.map((d) => paths.memoryFileOf(d, cwd)) : [target.file];
+            for (const file of files) {
+              const md = readMdSync(file);
+              if (sectionHasEntry(md, section, entry)) {
+                skipped++;
+                continue;
+              }
+              const r = upsertSectionText(md, section, entry);
+              if (!r.ok) {
+                skipped++;
+                continue;
+              }
+              await writeFile(file, r.text, "utf8");
+              wrote++;
+              flattened = flattened || r.flattened === true;
             }
-            const r = upsertSectionText(md, section, entry);
-            if (!r.ok) {
-              skipped++;
-              continue;
-            }
-            await writeFile(file, r.text, "utf8");
-            wrote++;
-          }
+            // v1.8.0-alpha.1 修复（D1）：entry 经 flattenEntry 扁平化为单行——含内嵌换行/标题行
+            // 时不再原样落盘破坏结构，message 明示合并，不静默撒谎。
+            const flatNote = flattened ? "（entry 含多行，已合并为单行）" : "";
           return {
             ok: wrote > 0,
             message: wrote > 0
-              ? `Saved to ${wrote} MEMORY.md file(s) under 「${section}」${skipped ? ` (${skipped} duplicate skipped)` : ""}.`
+              ? `Saved to ${wrote} MEMORY.md file(s) under 「${section}」${flatNote}${skipped ? ` (${skipped} duplicate skipped)` : ""}.`
               : `Duplicate entry under 「${section}」; nothing written.`,
           };
         } catch (e) {
@@ -202,7 +206,6 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
           [{ type: "text", text: value?.actual ? `${value.message}\n\n当前实际内容：\n${value.actual}` : value?.message ?? "Done." }],
       },
       async execute(args, exec) {
-        state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings.", actual: "" };
         const section = String(args.section ?? "").trim();
@@ -217,7 +220,10 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
             ? markEntryDeletedText(md, section, oldText)
             : replaceSectionText(md, section, oldText, args.newText);
           if (!r.ok) {
-            return { ok: false, message: `更新被拒绝（${r.reason}）：请先 memory_read 重读后再试。`, actual: r.actual ?? "" };
+            const msg = r.reason === "heading-mismatch"
+              ? `更新被拒绝（heading-mismatch）：newText 的标题行与 section 参数「${section}」不一致（或缺少 ## 标题行）。请保持两者一致后重试；确需重命名章节，请同步修改标题行与 section 参数。`
+              : `更新被拒绝（${r.reason}）：请先 memory_read 重读后再试。`;
+            return { ok: false, message: msg, actual: r.actual ?? "" };
           }
           await writeFile(file, r.text, "utf8");
           return { ok: true, message: `Updated 「${section}」 in ${toHomeShort(file)} (${r.reason}).`, actual: "" };
@@ -258,7 +264,6 @@ export function registerHybridTools({ ctx, getConfig, paths, records, state }) {
         render: (_args, value) => [{ type: "text", text: value?.message ?? "Done." }],
       },
       async execute(args, exec) {
-        state.recentAgentWrote = true;
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings." };
         const cwd = sessionCwd(exec);
@@ -327,7 +332,7 @@ export function attachHybridGuards(ctx, getConfig, paths, state) {
       kind: "ask",
       reason:
         `⚠️ 项目级 MEMORY.md 全量重整确认\n` +
-        `当前 ${gate.size} 字符（已超预算 ${c.workspaceBudgetChars || 3000}），冷却已满足（上次重整 ${gate.last ? new Date(gate.last).toLocaleString() : "从未"}）。\n` +
+        `当前 ${gate.size} 字符（已超预算 ${c.workspaceBudgetChars || 6000}），冷却已满足（上次重整 ${gate.last ? new Date(gate.last).toLocaleString() : "从未"}）。\n` +
         `即将用 ${size} 字符的新全文覆盖 ${file}（原文件会自动备份）。\n` +
         `请确认是否执行重整？`,
     };

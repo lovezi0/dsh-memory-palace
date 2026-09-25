@@ -1,14 +1,12 @@
-// memory-palace 共享常量：场景关键词 + 两个 LLM prompt（智能模式摘要 / 项目记忆蒸馏）。
+// memory-palace 共享常量：两个 LLM prompt（会话蒸馏 / 项目记忆蒸馏）。
 // 纯常量模块，无状态、可被任意模块与单测直接引用。
+// v1.8.0：SCENE_KEYWORDS（plugin 模式防闲聊闸门关键词）已随 plugin 模式删除。
 
-// 场景关键词（增强原方案 D）：命中即视为"用户告知偏好 / 做出技术决策"，纯文本轮次也写。
-export const SCENE_KEYWORDS = ["记住", "记一下", "remind", "偏好", "决定", "以后都", "约定", "采用", "根因", "修复"];
-
-// 智能模式（memoryMode==="smart"）的摘要提炼 prompt（v1.4.0 起为函数，支持回喂存量记忆）。
+// 会话提炼 prompt（手动「蒸馏会话」按钮，distillSessionCore 使用）。
 // 让 LLM 输出 {summary, durable:[{scope,fact}], memoryOps:[...]}；memoryOps 用于基于编号的现有记忆做增量维护。
-// allowDelete=true（手动蒸馏按钮）：开放 add/replace/delete；false（自动智能模式）：禁 delete，仅 add/replace。
-// 注意：回喂是否实际发生由 distill.mjs 按 cfg().feedbackEnabled 决定（智能模式级，自动/手动均生效）；
-// 此处仅声明能力边界——allowDelete 决定 prompt 是否允许 delete 指令（自动模式禁 delete，手动按钮放开）。
+// allowDelete=true（手动蒸馏按钮）：开放 add/replace/delete。
+// 注意：回喂是否实际发生由 distill.mjs 按 cfg().feedbackEnabled 决定；
+// 此处仅声明能力边界——allowDelete 决定 prompt 是否允许 delete 指令。
 export function SUMMARY_PROMPT({ allowDelete = false, outputBudget } = {}) {
   const feedbackInstr = allowDelete
     ? "【维护现有记忆】若对话中提供了「项目级记忆 / 用户级记忆（逐行编号）」，你可在输出 memoryOps 中对现有记忆做增量维护：\n" +
