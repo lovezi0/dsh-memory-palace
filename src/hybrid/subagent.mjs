@@ -236,8 +236,12 @@ function applyLogOps(logFiles, dateStr, ops) {
 // 记忆子 agent 主入口。每轮必跑（定案：不走闸门）；plan 模式拦截由调用方（index.mjs _settle）负责。
 // 返回 { ok, mode }：mode = "noop"（无重点收尾）| "written"（有落盘）| "no-tool-support"；
 // ok=false 表示整体失败（不推进断点、下一次 turn/end 自动补蒸；不降级为任何轻量写入）。
-export async function runMemorySubagent({ ctx, getConfig, paths, state, session, dirs, isError }) {
+export async function runMemorySubagent({ ctx, getConfig, paths, state, session, dirs, isError, getSeq, setSeq }) {
   const cfg = getConfig();
+  // 增量断点按会话取用：调用方（index.mjs）注入 getSeq/setSeq（按 sessionId 分桶）。
+  // 未注入时回落全局 state.lastSummarizedSeq，保持旧行为与向后兼容。
+  const readSeq = typeof getSeq === "function" ? getSeq : () => state.lastSummarizedSeq;
+  const writeSeq = typeof setSeq === "function" ? setSeq : (v) => { state.lastSummarizedSeq = v; };
   // 调试日志（v1.6.0）：与 distill.mjs 同款门控。dbgFail=失败/跳过留痕（无条件输出，排障可观测）；
   // dbg=受 distillDebugLog 开关控制的详单（模型解析/请求参数/流进度/ops 结果计数）。
   // 隐私红线：只打计数/字符数/元数据/错误 message，绝不打印对话或日志正文文本。
@@ -253,11 +257,11 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
     return { ok: false, mode: "no-model" };
   }
   const { provider, model } = resolved;
-  dbg("entry", { sessionId: session.id, fromSeq: state.lastSummarizedSeq, provider, model });
+  dbg("entry", { sessionId: session.id, fromSeq: readSeq(), provider, model });
 
-  const hist = projectTurnMessages(session, state.lastSummarizedSeq);
+  const hist = projectTurnMessages(session, readSeq());
   if (!hist.length) {
-    dbg("no events in range", { fromSeq: state.lastSummarizedSeq });
+    dbg("no events in range", { fromSeq: readSeq() });
     return { ok: true, mode: "noop" };
   }
 
@@ -348,13 +352,13 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
         // v1.6.3 stop 三态判定（修复：误调未知工具后模型直接收尾 → 日志丢失且断点被无脑推进）。
         // ① 有落盘 → 正常完成，推进断点。
         if (appliedWrites > 0) {
-          state.lastSummarizedSeq = session.seq;
+          writeSeq(session.seq);
           dbg("done", { round, mode: "written", appliedWrites });
           return { ok: true, mode: "written" };
         }
         // ② 从未调用任何工具 → 模型判定本轮无实质内容（noop），推进断点。
         if (toolAttempts === 0) {
-          state.lastSummarizedSeq = session.seq;
+          writeSeq(session.seq);
           dbg("done", { round, mode: "noop" });
           return { ok: true, mode: "noop" };
         }

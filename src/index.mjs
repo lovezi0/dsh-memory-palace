@@ -180,8 +180,14 @@ export function apply(ctx, config) {
     settleTimer: null,        // debounce 计时器
     // 记忆子代理的增量断点（session 事件 seq）——v1.8.0 核查确认：本字段**不是** smart 模式专属，
     // hybrid 子代理自己用它（hybrid/subagent.mjs 读取 + 成功时推进），故保留。
-    lastSummarizedSeq: -1,
-    breakpointSessionId: null, // 断点所属会话（跨会话必须重置，见 session/event 处理）
+    // v1.8.0-fix：lastSummarizedSeq / breakpointSessionId 曾为全局单值，并发会话互相重置，
+    // 已改为 state.seqBySession（sessionId -> seq）按会话分桶。
+    // ---- 每会话状态分桶（修复：结算写入错项目）----
+    // 下列字段语义是「当前请求所属会话」，但原实现放在进程级全局上，而 session/event 是无条件覆盖的，
+    // 多会话并发时必然互相污染：A 会话的内容被结算进 B 项目目录。改为按 sessionId 分桶后互不干扰。
+    buffersBySession: new Map(), // sessionId -> { turnBuffer, sawErrorTurn, session }
+    settleTimers: new Map(),     // sessionId -> debounce timer
+    seqBySession: new Map(),     // sessionId -> 记忆子代理增量断点
     planModeActive: false,    // 计划模式：禁写记忆（硬编码默认，无开关；仅经 session/event 的 plan/mode 翻转；未装 dsh-plan-mode 永不触发=不拦截）
     // v1.7.2：会话 → agent 预设 id（仅"切换预设"事件写入；创建头另在 presetOfSession 里兜底读）。
     // 只增不减：会话结束后残留几条字符串，代价可忽略；切回同一 session 断言预设不变（宿主侧保证）。
@@ -326,15 +332,29 @@ export function apply(ctx, config) {
   // 触发时 buffer 只剩残缺片段（无 user 请求、无 tool/result），工具期错误信号（extractToolErrorText）
   // 会取不到，传给记忆子代理的 isError 随之失准。
   // 结算策略：debounce（安静期后只结算一次）+ 新 user/message 时立即结算上一个 request。
+  // 取/建某会话的状态桶（sessionId 缺失时归入同一个兜底桶，保持旧行为不失效）。
+  function bucketOf(sessionId) {
+    const id = sessionId || "__nosession__";
+    let b = state.buffersBySession.get(id);
+    if (!b) {
+      b = { turnBuffer: [], sawErrorTurn: false, session: null };
+      state.buffersBySession.set(id, b);
+    }
+    return b;
+  }
+
   ctx.on("session/event", (session, event) => {
     if (session) state.activeSession = session;
     if (session?.header?.cwd) state.activeCwd = session.header.cwd;
+    const sid = session?.id || "__nosession__";
+    const bucket = bucketOf(sid);
+    if (session) bucket.session = session;
     // 切换 session 时重置记忆子代理的增量断点（新会话从 firstLiveSeq 起算）。
     // 必须做：seq 按会话独立编号，沿用上一会话的断点会让 projectTurnMessages 取到空区间 →
     // 子代理静默 noop、日志永不落盘（v1.6.0 起沿用至今；v1.8.0 核查确认此处不是 smart 残留）。
-    if (session && session.id !== state.breakpointSessionId) {
-      state.breakpointSessionId = session.id;
-      state.lastSummarizedSeq = session.firstLiveSeq;
+    // 断点同样按会话分桶：全局单值会让并发会话互相重置。
+    if (session && !state.seqBySession.has(sid)) {
+      state.seqBySession.set(sid, session.firstLiveSeq);
     }
     const type = event?.type;
     // v1.7.2：预设切换（仅空会话可切；宿主在切换提交后追加该事件）。记进 Map 供 isSessionSilent 读取。
@@ -366,21 +386,23 @@ export function apply(ctx, config) {
       if (text) {
         const role = type === "tool/result" ? "tool" : type === "user/message" ? "user" : "assistant";
         // 新用户请求到来：先结算并清空上一个 request（若存在），避免与本请求混淆。
-        if (type === "user/message" && state.turnBuffer.length) _flushTurn();
-        state.turnBuffer.push({ role, text });
-        if (state.turnBuffer.length > TURN_BUFFER_MAX) state.turnBuffer = state.turnBuffer.slice(-TURN_BUFFER_MAX);
-        const total = state.turnBuffer.reduce((n, b) => n + b.text.length, 0);
+        // 缓冲按会话分桶：否则 A 会话的消息会混进 B 会话的结算，连同内容一起写错项目。
+        if (type === "user/message" && bucket.turnBuffer.length) _flushTurn(sid, bucket);
+        bucket.turnBuffer.push({ role, text });
+        if (bucket.turnBuffer.length > TURN_BUFFER_MAX) bucket.turnBuffer = bucket.turnBuffer.slice(-TURN_BUFFER_MAX);
+        const total = bucket.turnBuffer.reduce((n, b) => n + b.text.length, 0);
         if (total > TURN_BUFFER_CHAR_CAP) {
           // v1.1.3 修复：溢出时【保留尾部最近内容】而非替换成占位——占位会让工具期错误检测
           // （extractToolErrorText）失效，传给记忆子代理的 isError 失准、错误现象漏记。
-          state.turnBuffer = state.turnBuffer.slice(-8);
+          bucket.turnBuffer = bucket.turnBuffer.slice(-8);
         }
       }
     } else if (type === "turn/end") {
       // 累积 request 级错误信号（跨 turn 合并），供结算时统一判定并传给记忆子代理。
-      if (event?.data?.reason?.kind === "error") state.sawErrorTurn = true;
-      // 不清空 buffer；用 debounce 在整段请求安静后结算一次。
-      _scheduleSettle();
+      // 同样按会话分桶：全局标志会让 A 会话的错误把 B 会话的日志标成 isError。
+      if (event?.data?.reason?.kind === "error") bucket.sawErrorTurn = true;
+      // 不清空 buffer；用 debounce 在整段请求安静后结算一次（定时器按会话独立）。
+      _scheduleSettle(sid);
     } else if (type === "compaction" || type?.startsWith?.("compaction/")) {
       // v1.7.0：无需再清"已注入标记"（该机制已删）——记忆正文改经 E 投影注入，
       // compaction 把投影消息移出 surface 后，后续 step 的去重扫描找不到它 → 自动重注。
@@ -443,14 +465,17 @@ export function apply(ctx, config) {
   // ---------- 结算一个完整 request：交给记忆子代理写今日日志（不在此处做任何直接写入） ----------
   // v1.8.0：原「防闲聊闸门 + 轻量兜底 + 错误捕获」（plugin）、「LLM 摘要分派」（smart）
   // 与「记忆写入总开关」(summarize) 均已删除，本函数收敛为单一路径：前置闸门 → 算错误信号 → 子代理。
-  async function _settle(capturedTurn, isError) {
+  async function _settle(capturedTurn, isError, sid, boundSession) {
     // 计划模式禁写（硬编码默认，无开关）：写入路径在此一处拦截
     if (state.planModeActive) return;
     const cfg = source();
     if (!cfg.enabled) return;
+    // 会话身份由入参显式传入（原实现读全局 state.activeSession，多会话并发时会写到别的项目目录）。
+    // boundSession 缺失时兜底用全局，保持旧行为不失效。
+    const session = boundSession || state.activeSession;
     // v1.7.2：静默会话（极简等预设）不写任何记忆——记忆子代理在此一处提前返回。
-    if (isSessionSilent(state.activeSession)) return;
-    const cwd = state.activeSession?.header?.cwd ?? null;
+    if (isSessionSilent(session)) return;
+    const cwd = session?.header?.cwd ?? null;
     const dirs = paths.writeDirs(cwd);
     if (!dirs.length) return;
 
@@ -465,26 +490,45 @@ export function apply(ctx, config) {
     // 失败【不】降级为任何轻量写入（v1.6.0 定案：无格式原文会破坏日志章节化结构）——
     // 子代理内部不推进断点，下一次 turn/end 自动补蒸。
     void hybrid
-      .runMemorySubagent({ ctx, getConfig: () => source(), paths, records, state, session: state.activeSession, dirs, isError: effectiveIsError })
+      .runMemorySubagent({
+        ctx,
+        getConfig: () => source(),
+        paths,
+        records,
+        state,
+        session,
+        dirs,
+        isError: effectiveIsError,
+        // 断点按会话分桶：全局单值在并发会话下会被互相重置，导致子代理静默 noop、日志不落盘。
+        getSeq: () => state.seqBySession.get(sid) ?? session?.firstLiveSeq ?? 0,
+        setSeq: (v) => state.seqBySession.set(sid, v),
+      })
       .catch(() => {});
   }
 
   // 立即结算并清空当前缓冲（供 debounce 到点、或收到新 user/message 时调用）。
-  function _flushTurn() {
-    const capturedTurn = state.turnBuffer;
-    const wasErrorTurn = state.sawErrorTurn;
-    state.turnBuffer = [];
-    state.sawErrorTurn = false;
+  function _flushTurn(sid, bucket) {
+    // 结算归属由入参会话决定（不再读全局 state.activeSession）。
+    const bound = bucket || bucketOf(sid);
+    const capturedTurn = bound.turnBuffer;
+    const wasErrorTurn = bound.sawErrorTurn;
+    bound.turnBuffer = [];
+    bound.sawErrorTurn = false;
     if (!capturedTurn.length) return;
-    void _settle(capturedTurn, wasErrorTurn).catch(() => {});
+    void _settle(capturedTurn, wasErrorTurn, sid, bound.session).catch(() => {});
   }
 
   // debounce：每次 turn/end 重置计时器；SETTLE_DELAY 内无新 turn/end（即整段请求安静）才结算一次。
-  function _scheduleSettle() {
-    if (state.settleTimer) clearTimeout(state.settleTimer);
-    state.settleTimer = setTimeout(() => {
-      state.settleTimer = null;
-      _flushTurn();
+  function _scheduleSettle(sid) {
+    // 每个会话独立计时：共用单一定时器时，B 的 turn/end 会把 A 的待结算 clearTimeout 掉 → A 整段丢失。
+    const id = sid || "__nosession__";
+    const prev = state.settleTimers.get(id);
+    if (prev) clearTimeout(prev);
+    const t = setTimeout(() => {
+      state.settleTimers.delete(id);
+      const bound = state.buffersBySession.get(id);
+      if (bound) _flushTurn(id, bound);
     }, SETTLE_DELAY);
+    state.settleTimers.set(id, t);
   }
 }
