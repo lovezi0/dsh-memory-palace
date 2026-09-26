@@ -11,6 +11,7 @@ import { join, dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import { expandHome, toHomeShort, readMdSync, nowStamp, normLine } from "../common/text.mjs";
 import { appendToSectionText, upsertSectionText, replaceSectionText, markEntryDeletedText, locateSection } from "../common/sections.mjs";
+import { planModeOf } from "../common/planmode.mjs";
 
 const REORG_MARK = "memory-palace:last-reorg:";
 const REORG_MARK_RE = new RegExp(`\\n?<!--\\s*${REORG_MARK}[^>]*-->\\s*$`);
@@ -315,7 +316,8 @@ export function attachHybridGuards(ctx, getConfig, paths, state) {
   ctx.on("tools/pre-execute", async (exec, next) => {
     const name = exec?.name;
     if (!HYBRID_WRITE_TOOLS.has(name)) return next();
-    if (state.planModeActive) {
+    // 按**会话**判定（plan 模式是会话级状态，见 common/planmode.mjs）——别的会话进 plan 不该 deny 本会话
+    if (planModeOf(state, exec?.agent?.session)) {
       return { kind: "deny", reason: "plan 模式下禁止写入记忆" };
     }
     if (name !== "memory_reorganize") return next();

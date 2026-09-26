@@ -59,7 +59,6 @@ function makeHarness() {
   let currentSessionTag = "UNKNOWN";
   const cfg = {
     enabled: true,
-    memoryMode: "hybrid",
     summaryModel: "",
     summaryTimeoutMs: 5000,
     subagentLogBudget: 20000,

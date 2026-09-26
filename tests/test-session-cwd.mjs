@@ -23,7 +23,6 @@ const baseCfg = (over = {}) => ({
   buddyWorkspaceMemoryDirs: [".workbuddy/memory", ".codebuddy/memory"],
   userBudgetChars: 4000,
   workspaceBudgetChars: 3000,
-  memoryMode: "hybrid",
   ...over,
 });
 
@@ -52,7 +51,7 @@ const dirB = makeWorkspace(join(TMP, "ws-b"), "B");
 // activeCwd 恒指向 B（模拟"最近活跃会话是 B"），但工具调用带 exec.agent.session.header.cwd = A。
 const cfg = baseCfg();
 const paths = createPaths(() => cfg, () => dirB);
-const state = { recentAgentWrote: false, planModeActive: false };
+const state = { planModeActive: false };
 const execA = { agent: { session: { header: { cwd: dirA } } } };
 
 const { ctx, tools } = captureCtx();

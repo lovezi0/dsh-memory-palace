@@ -114,7 +114,7 @@ section("② 记忆子 agent 循环（mock LLM）");
     { seq: 0, type: "user/message", data: { text: "帮我查一下 xxx 的配置问题" } },
     { seq: 1, type: "assistant/message", data: { text: "已定位：问题在于渠道映射未生效" } },
   ];
-  const cfg = () => ({ enabled: true, summaryModel: "", summaryTimeoutMs: 5000, subagentLogBudget: 20000, memoryMode: "hybrid" });
+  const cfg = () => ({ enabled: true, summaryModel: "", summaryTimeoutMs: 5000, subagentLogBudget: 20000 });
 
   // 场景 A：无重点 → 单轮 stop 纯文本，推进断点
   {

@@ -5,6 +5,7 @@ import { defineTool } from "@deepseek-ai/dsh-tools";
 import { join } from "node:path";
 import { todayISO, isoDaysAgo, expandHome, toHomeShort, readMdSync, budgetClip, stripDeletedLines } from "./common/text.mjs";
 import { appendLineDedup, findMatches, removeLineByMatch, recentLogDates } from "./common/records.mjs";
+import { planModeOf } from "./common/planmode.mjs";
 
 /**
  * @param {{ ctx: object, getConfig: () => object, paths: object, state: object }} deps
@@ -409,8 +410,9 @@ export function registerTools({ ctx, getConfig, paths, state }) {
   const WRITE_TOOLS = new Set(["memory_note", "memory_note_user", "memory_delete"]);
   ctx.on("tools/pre-execute", async (exec, next) => {
     const name = exec?.name;
-    // plan 模式禁写：三个写工具一律 deny，连预览/确认都拦
-    if (state.planModeActive && WRITE_TOOLS.has(name)) {
+    // plan 模式禁写：三个写工具一律 deny，连预览/确认都拦。
+    // 按**会话**判定（plan 模式是会话级状态，见 common/planmode.mjs）——别的会话进 plan 不该 deny 本会话。
+    if (planModeOf(state, exec?.agent?.session) && WRITE_TOOLS.has(name)) {
       return { kind: "deny", reason: "plan 模式下禁止写入记忆" };
     }
     if (name !== "memory_delete") return next();

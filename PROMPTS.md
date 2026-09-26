@@ -57,7 +57,9 @@
 关键约束：`text()` 必须**始终**返回非空（即便无记忆也要注入指令），否则 agent 不知记忆系统存在 → 永不记 → 死循环。
 
 ### 2.4 plan 模式禁写提示 `planNote`
-仅 `state.planModeActive` 时追加：「当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取用 memory_read）。」属于软提示，网关物理兜底仍生效。
+仅当**当前会话**处于 plan 模式时追加：「当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取用 memory_read）。」属于软提示，网关物理兜底仍生效。
+
+> 判定走 `planModeOf(state, context.agent.session)`（`common/planmode.mjs`）：宿主 plan 模式是**会话级**状态（`session.append('plan/mode')`），故按会话判定——别的会话进 plan 不得往本会话 prompt 里塞这条提示。
 
 ### 2.5 自定义指令 `customInstructions`（v1.7.1 特性3）
 

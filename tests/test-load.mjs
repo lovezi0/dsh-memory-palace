@@ -557,10 +557,14 @@ console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt
   fire(s, captured, "plan/mode", { active: true });
   const gate = captured.listeners["tools/pre-execute"][0];
   const next = async () => ({ kind: "allow" });
-  assert((await gate({ name: "memory_note", arguments: { content: "x" } }, next)).kind === "deny", "[P1] plan: memory_note denied by gate");
-  assert((await gate({ name: "memory_note_user", arguments: { content: "x" } }, next)).kind === "deny", "[P1] plan: memory_note_user denied by gate");
-  assert((await gate({ name: "memory_delete", arguments: { match: "x", level: "project" } }, next)).kind === "deny", "[P2] plan: memory_delete preview denied");
-  assert((await gate({ name: "memory_delete", arguments: { match: "x", level: "project", confirm: true } }, next)).kind === "deny", "[P2] plan: memory_delete confirm denied");
+  // 载荷带上 agent.session（与上面的 plan/mode 事件同属一个会话）→ 走**生产判定路径**：按会话查
+  // planModeBySession 表。若不带会话身份，则会走「全局兜底」路径（拿不到会话上下文的场合），
+  // 两条路径的行为分别由本场景与 tests/test-planmode-crosstalk.mjs 覆盖。
+  const execOf = (over) => ({ arguments: {}, agent: { session: s }, ...over });
+  assert((await gate(execOf({ name: "memory_note", arguments: { content: "x" } }), next)).kind === "deny", "[P1] plan: memory_note denied by gate");
+  assert((await gate(execOf({ name: "memory_note_user", arguments: { content: "x" } }), next)).kind === "deny", "[P1] plan: memory_note_user denied by gate");
+  assert((await gate(execOf({ name: "memory_delete", arguments: { match: "x", level: "project" } }), next)).kind === "deny", "[P2] plan: memory_delete preview denied");
+  assert((await gate(execOf({ name: "memory_delete", arguments: { match: "x", level: "project", confirm: true } }), next)).kind === "deny", "[P2] plan: memory_delete confirm denied");
 
   // P3：plan 模式下 turn/end 不触发记忆子代理（_settle 顶部拦截）
   const ws3 = mkdtempSync(join(tmpdir(), "mem-p3-"));
@@ -652,7 +656,7 @@ console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
     const getConfig = () => cfg;
     const paths = createPaths(getConfig, () => null);
     const records = createRecords({ getConfig, paths });
-    const state = { activeCwd: null, activeSession: null, lastSummarizedSeq: -1, summarySessionId: null };
+    const state = { activeCwd: null, activeSession: null, lastSummarizedSeq: -1 };
     const distill = createDistill({ ctx, getConfig, paths, records, state });
     return { cfg, mockLlm, paths, distill };
   }
@@ -661,7 +665,7 @@ console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
   // R1：503 前 2 次失败 → 重试后第 3 次成功（calls=3，结果 ok）
   {
     const ws = mkdtempSync(join(tmpdir(), "mem-r1-"));
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 503, failTimes: 2, text: '{"summary":"[OK]","durable":[]}' });
+    const { distill, mockLlm, paths } = buildDistill({}, { failStatus: 503, failTimes: 2, text: '{"summary":"[OK]","durable":[]}' });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析仓库结构" } });
     fire(s, capturedNoop, "tool/result", { content: "src/x" });
@@ -675,7 +679,7 @@ console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
   // R2：fatal（legacy fail，无 status）→ 不重试（calls=1），结果 ok:false
   {
     const ws = mkdtempSync(join(tmpdir(), "mem-r2-"));
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { fail: true });
+    const { distill, mockLlm, paths } = buildDistill({}, { fail: true });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
     fire(s, capturedNoop, "tool/result", { content: "x" });
@@ -688,7 +692,7 @@ console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
   // R3：503 永久失败 → 重试耗尽（maxRetries=3 → 4 次调用），结果 ok:false
   {
     const ws = mkdtempSync(join(tmpdir(), "mem-r3-"));
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 503, failForever: true });
+    const { distill, mockLlm, paths } = buildDistill({}, { failStatus: 503, failForever: true });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
     fire(s, capturedNoop, "tool/result", { content: "x" });
@@ -701,7 +705,7 @@ console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
   // R4：500 永久失败 → 单独限到 HTTP500_MAX_RETRIES=1（2 次调用）
   {
     const ws = mkdtempSync(join(tmpdir(), "mem-r4-"));
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 500, failForever: true });
+    const { distill, mockLlm, paths } = buildDistill({}, { failStatus: 500, failForever: true });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
     fire(s, capturedNoop, "tool/result", { content: "x" });
@@ -714,7 +718,7 @@ console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
   // R5：429 永久失败 → 可重试（limited，走通用 maxRetries → 4 次调用）
   {
     const ws = mkdtempSync(join(tmpdir(), "mem-r5-"));
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { failStatus: 429, failForever: true });
+    const { distill, mockLlm, paths } = buildDistill({}, { failStatus: 429, failForever: true });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
     fire(s, capturedNoop, "tool/result", { content: "x" });
@@ -783,7 +787,7 @@ console.log("[F] FEEDBACK existing memory into distill");
     const getConfig = () => cfg;
     const paths = cp(getConfig, () => null);
     const records = createRecords({ getConfig, paths });
-    const state = { activeCwd: null, activeSession: null, lastSummarizedSeq: -1, summarySessionId: null };
+    const state = { activeCwd: null, activeSession: null, lastSummarizedSeq: -1 };
     const distill = createDistill({ ctx, getConfig, paths, records, state });
     return { cfg, mockLlm, paths, distill };
   }
@@ -804,7 +808,7 @@ console.log("[F] FEEDBACK existing memory into distill");
         { op: "delete", line: 3, oldText: "- 旧事实二" },
       ],
     });
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart", feedbackEnabled: true }, { text: fbText });
+    const { distill, mockLlm, paths } = buildDistill({ feedbackEnabled: true }, { text: fbText });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析仓库结构" } });
     fire(s, capturedNoop, "tool/result", { content: "src/x" });
@@ -836,7 +840,7 @@ console.log("[F] FEEDBACK existing memory into distill");
         { op: "delete", line: 3, oldText: "- 旧事实二" },
       ],
     });
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart", feedbackEnabled: true }, { text: fbText });
+    const { distill, mockLlm, paths } = buildDistill({ feedbackEnabled: true }, { text: fbText });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析" } });
     fire(s, capturedNoop, "tool/result", { content: "x" });
@@ -859,7 +863,7 @@ console.log("[F] FEEDBACK existing memory into distill");
     const ws = mkdtempSync(join(tmpdir(), "mem-f3-"));
     await (await import("node:fs/promises")).mkdir(join(ws, ".deepseek-harness", "memory"), { recursive: true });
     const poison = "But wait - looking at the context, I should provide a clean response. 需要的话，我可以顺手把这条官方 verified 事实记进项目记忆，方便日后核对版本。";
-    const { distill, mockLlm, paths } = buildDistill({ memoryMode: "smart" }, { text: poison });
+    const { distill, mockLlm, paths } = buildDistill({}, { text: poison });
     const s = fakeSession(ws);
     fire(s, capturedNoop, "user/message", { message: { content: "分析 JRE 版本" } });
     const dirs = paths.writeDirs(ws);
