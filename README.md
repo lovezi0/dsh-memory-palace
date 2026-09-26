@@ -131,6 +131,7 @@ dsh plugin --profile web remove dsh-memory-palace
         - 🐛memory文件格式错误时读取漂移的问题
         - 💪适配deepseek harness 0.1.7-rc.2
         - 💪适配deepseek harness desktop
+        - 🐛**修复写侧串台**：`_settle` 仍读全局 `state.activeSession`，多会话并发时会把 A 会话的内容写进 B 项目的每日日志（与 #1/#2 修的「读侧 E 投影」是两条路径）；同时 `turnBuffer` / `settleTimer` / 增量断点改为按 `sessionId` 分桶
 - **v1.7.2-legacy** — dsh-memory-palace 从 v1.0.0 的基础记忆读写（防闲聊闸门、公民指令、删除工具）起步，逐步演进到 v1.7.2 的「混合模式 + 独立通道注入 + 自定义指令 + 记忆子 agent 蒸馏」，全程主线是不断增强记忆生成/注入方式，同时持续修复模式互串、工具串台、缓存堆积等稳定性缺陷。历史，见 [CHANGELOG.md](./CHANGELOG.md)
 - **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
 
