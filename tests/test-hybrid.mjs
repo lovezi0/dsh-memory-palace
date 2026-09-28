@@ -317,9 +317,16 @@ section("② 记忆子 agent 循环（mock LLM）");
   // 场景 G（v1.6.3 用例B）：误调未知工具 run_code 后模型反复纯文本收尾（放弃），重试预算耗尽
   // 期望：mode="no-write"（ok:false）、断点不推进、dbgFail("no write applied") 被调、催促发生 ≤3 次。
   {
-    const stderr = [];
-    const origErr = console.error;
-    console.error = (...a) => stderr.push(a.map(String).join(" "));
+    // v1.8.0-alpha.4 retarget：日志改为注入式 logger（不再走 console.error），改用收集型 sink 断言。
+    const sink = [];
+    const logger = {
+      for: () => ({
+        dbgFail: (why, extra) => sink.push(`${why}${extra === undefined ? "" : ` ${JSON.stringify(extra)}`}`),
+        dbg: () => {},
+        info: () => {},
+        raw: () => {},
+      }),
+    };
     let n = 0;
     try {
       const ctx = {
@@ -344,16 +351,16 @@ section("② 记忆子 agent 循环（mock LLM）");
         },
       };
       const state = { lastSummarizedSeq: 0 };
-      const r = await runMemorySubagent({ ctx, getConfig: cfg, paths: null, records: null, state, session: mkSession(baseEvents), dirs: [logDir], isError: false });
+      const r = await runMemorySubagent({ ctx, getConfig: cfg, paths: null, records: null, state, session: mkSession(baseEvents), dirs: [logDir], isError: false, logger });
       assert.equal(r.ok, false, "重试耗尽应失败");
       assert.equal(r.mode, "no-write", "应判 no-write");
       assert.equal(state.lastSummarizedSeq, 0, "断点不应推进");
-      assert.ok(stderr.some((l) => l.includes("no write applied")), "应触发 dbgFail no write applied");
-      const urges = stderr.filter((l) => l.includes("retry after unknown tool")).length;
+      assert.ok(sink.some((l) => l.includes("no write applied")), "应触发 dbgFail no write applied");
+      const urges = sink.filter((l) => l.includes("retry after unknown tool")).length;
       assert.equal(urges, 3, `催促应恰好 3 次（MAX_RETRY），实际 ${urges}`);
       ok("场景G：未知工具 + 反复放弃 → 催促 3 次后 no-write + 断点不推进");
     } finally {
-      console.error = origErr;
+      // v1.8.0-alpha.4：日志改为注入式 logger，无需恢复 console.error。
     }
   }
 

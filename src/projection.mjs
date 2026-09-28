@@ -152,7 +152,7 @@ export function buildProjections({ getConfig, paths, session, isSilent }) {
  * 注册 E 投影钩子。
  * @param {{ ctx: object, getConfig: () => object, paths: object, isSilent?: (session?: object) => boolean }} deps
  */
-export function registerProjection({ ctx, getConfig, paths, isSilent }) {
+export function registerProjection({ ctx, getConfig, paths, isSilent, logger }) {
   ctx.on("agent/pre-step", async ({ agent, messages, step, signal }, next) => {
     // 先让瀑布流继续，拿到宿主与其他插件合成后的决策——投影要折叠进它的 messages。
     const decision = await next();
@@ -178,9 +178,10 @@ export function registerProjection({ ctx, getConfig, paths, isSilent }) {
     } catch (error) {
       // 🔴 绝不冒泡：pre-step 抛错会让整个 turn 失败（宿主契约，见文件头）。
       // 契约失效时表现为"记忆正文不注入"，这行 warn 是唯一排查线索。
-      console.error(
-        `[memory-palace] projection skipped (step ${step}): ${error?.message || String(error)}`,
-      );
+      // v1.8.0-alpha.4：原 stderr 输出改为落盘（warn 级 → info.log），受 distillDebugLog 门控。
+      logger?.for?.(agent?.session?.id, "projection")?.dbgFail(`projection skipped (step ${step})`, {
+        message: error?.message || String(error),
+      });
       return decision;
     }
   });

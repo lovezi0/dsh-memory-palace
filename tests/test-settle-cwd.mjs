@@ -20,13 +20,15 @@ function ok(name) { passed++; console.log(`  ✓ ${name}`); }
 const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
 
 // 驱动 apply()：mock LLM 让每轮子代理都成功落盘一条带会话标识的日志。
-function makeHarness() {
+function makeHarness(opts = {}) {
+  const profileDir = opts.profileDir;
   const listeners = new Map();
   const ctx = {
     on(ev, h) { if (!listeners.has(ev)) listeners.set(ev, []); listeners.get(ev).push(h); return () => {}; },
     inject(_deps, cb) { try { cb({ settings: { describe: () => [], replace: async () => {}, installSection: () => {} } }); } catch {} return () => {}; },
     effect() { return () => {}; },
-    get() { return undefined; },
+    // v1.8.0-alpha.4：日志落盘取径依赖 profileContext；未传 profileDir 时保持旧行为（logger 静默降级）。
+    get(name) { return name === "profileContext" && profileDir ? { dir: profileDir } : undefined; },
     systemPrompt: { section() { return () => {}; } },
     tools: { register() { return () => {}; }, restrict() { return () => {}; } },
     llm: {
@@ -69,6 +71,7 @@ function makeHarness() {
     userBudgetChars: 4000,
     workspaceBudgetChars: 3000,
     silentPresets: [],
+    distillDebugLog: !!opts.debugLog,
   };
   apply(ctx, cfg);
   let seqCounter = 0;
@@ -154,6 +157,49 @@ console.log("\n② 断点隔离：两会话断点互不影响");
   emit("session/event", sessB, { type: "turn/end", data: {} });
   await new Promise((r) => setTimeout(r, 4000));
   ok("两会话并发结算不互相 clearTimeout（均能落盘）");
+}
+
+console.log("\n③ 日志落盘隔离：并发结算时日志也各归各会话目录（v1.8.0-alpha.4）");
+{
+  // ①② 只覆盖「记忆写入」隔离，其 harness 的 ctx.get() 恒为 undefined → logger 全程静默降级，
+  // 日志路径**完全未被覆盖**。本节补上：注入 profileContext，让 logger 真正落盘，
+  // 再跑同一批并发结算场景，断言日志目录与内容都不串。
+  const profileDir = join(TMP, "profile-web");
+  mkdirSync(profileDir, { recursive: true });
+  const { emit } = makeHarness({ profileDir, debugLog: true });
+  // 独立工作区：①② 已把 FROM-AAA 写进 wsA/wsB 的今日日志，复用会让 mock 把回喂日志误判为
+  // "已写入"从而走 noop 路径 —— 那样就覆盖不到真正的写入链路（tool-calls round / tool ok / written）。
+  const wsC = makeWs("ws-c");
+  const wsD = makeWs("ws-d");
+  const sA = mkSess("sess-A", wsC), sB = mkSess("sess-B", wsD);
+  emit("session/event", sA, userMsg("AAA-ONLY-CONTENT"));
+  emit("session/event", sA, toolRes("AAA-tool"));
+  emit("session/event", sB, userMsg("BBB-ONLY-CONTENT"));
+  emit("session/event", sB, toolRes("BBB-tool"));
+  emit("session/event", sA, { type: "turn/end", data: {} });
+  emit("session/event", sB, { type: "turn/end", data: {} });
+  await new Promise((r) => setTimeout(r, 4000));
+
+  const logsRoot = join(profileDir, ".memory-palace", "logs");
+  const rd = (f) => (existsSync(f) ? readFileSync(f, "utf8") : "");
+  const aTxt = rd(join(logsRoot, "sess-A", "info.log")) + rd(join(logsRoot, "sess-A", "debug.log"));
+  const bTxt = rd(join(logsRoot, "sess-B", "info.log")) + rd(join(logsRoot, "sess-B", "debug.log"));
+  console.log("    A 日志:", JSON.stringify(aTxt.slice(0, 130)));
+  console.log("    B 日志:", JSON.stringify(bTxt.slice(0, 130)));
+
+  assert.ok(aTxt.length > 0, "A 应有日志落盘（证明 logger 真的在工作，非静默降级）");
+  assert.ok(bTxt.length > 0, "B 应有日志落盘");
+  // 归属判据：子代理 debug 的 entry 行带 sessionId；台账行带 cwd。
+  assert.ok(aTxt.includes("sess-A"), "A 的日志应含自己的 sessionId（sess-A）");
+  assert.ok(bTxt.includes("sess-B"), "B 的日志应含自己的 sessionId（sess-B）");
+  assert.ok(!aTxt.includes("sess-B"), "A 的日志不得出现 sess-B —— 日志串台");
+  assert.ok(!bTxt.includes("sess-A"), "B 的日志不得出现 sess-A —— 日志串台");
+  assert.equal(existsSync(join(logsRoot, "__nosession__")), false, "两会话都有身份，不得落 __nosession__");
+  // 确认覆盖的是【写入链路】而非 noop 路径（否则本节强度不足）。
+  assert.ok(aTxt.includes("log_write_ops"), "A 的日志应记录工具调用（证明覆盖写入链路）");
+  assert.ok(bTxt.includes("log_write_ops"), "B 的日志应记录工具调用");
+  assert.ok(/mode=written/.test(aTxt) && /mode=written/.test(bTxt), "两会话都应呈 written 终态");
+  ok("并发结算：日志目录与内容均按会话隔离，无串台");
 }
 
 console.log(`\n通过 ${passed} 项`);

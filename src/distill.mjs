@@ -13,14 +13,18 @@ import { runWithRetry, RETRY_CONSTANTS } from "./common/retry.mjs";
 /**
  * @param {{ ctx: object, getConfig: () => object, paths: object, records: object }} deps
  */
-export function createDistill({ ctx, getConfig, paths, records }) {
+export function createDistill({ ctx, getConfig, paths, records, logger }) {
   const cfg = () => getConfig();
 
-  // 调试日志（v1.3.0）：dbgFail=失败/跳过留痕（无条件输出，不受开关控制，保证排障可观测）；
-  // dbg=受 distillDebugLog 开关控制的详单（模型解析/请求参数/流进度计数/错误详情）。
-  // 隐私红线：只打计数/字符数/元数据/错误 message+stack 首行，绝不打印对话或 MEMORY.md 文本。
-  const dbgFail = (why, extra) => console.error(`[memory-palace] distill skip: ${why}`, extra ? JSON.stringify(extra) : "");
-  const dbg = (why, extra) => { if (!cfg().distillDebugLog) return; console.error(`[memory-palace][debug] ${why}`, extra !== undefined ? JSON.stringify(extra) : ""); };
+  // 日志（v1.8.0-alpha.4）：原 stderr 输出改为经统一 logger 落盘
+  // （`<profileDir>/.memory-palace/logs/<sessionId>/{info,debug}.log`，见 common/logger.mjs）。
+  // 按【会话】取作用域日志器——工厂级闭包会让并发会话的日志落到同一目录；logger 未注入时降级为 no-op。
+  // dbgFail=失败/跳过留痕（warn 级 → info.log）；dbg=详单（debug 级 → debug.log）；
+  // 两者统一受 distillDebugLog 门控：关闭时（默认）本插件零输出（既不写终端也不写文件）。
+  // 隐私红线：只打计数/字符数/错误 message+stack 首行等元数据，绝不打印对话或 MEMORY.md 文本
+  // （唯一例外：distillLogLevel=debug 时的 LLM 原始响应，经 raw() 显式落 debug.log）。
+  const noop = () => {};
+  const logFor = (session) => (typeof logger?.for === "function" ? logger.for(session?.id, "distill") : null);
 
   // 模型解析（v1.2.3 修复）：summaryModel 存的是注册表 models[].id 原样（client 下拉 value = m.id），
   // pi-ai getModel(provider, id) 按 model.id 全等匹配（pi-ai models.js: getModels(provider).find(m => m.id === id)），
@@ -46,6 +50,9 @@ export function createDistill({ ctx, getConfig, paths, records }) {
     return null;
   }
   async function resolveModel(summaryModel, session) {
+    const log = logFor(session);
+    const dbg = log ? log.dbg : noop;
+    const dbgFail = log ? log.dbgFail : noop;
     const sm = (summaryModel || "").trim();
     if (sm) {
       const hit = await findModelInRegistry(sm);
@@ -97,6 +104,9 @@ export function createDistill({ ctx, getConfig, paths, records }) {
   // v1.8.0：唯一调用方 = 按钮「蒸馏会话」（全量 fromSeq=0）；原 smart 模式自动摘要链路已删除。
   // 返回 { ok, summary, durableCount }；失败 { ok:false }（调用方各自决定降级策略）。
   async function distillSessionCore(session, dirs, fromSeq, opts) {
+    const log = logFor(session);
+    const dbg = log ? log.dbg : noop;
+    const dbgFail = log ? log.dbgFail : noop;
     const allowDelete = !!(opts && opts.allowDelete);
     // 回喂存量记忆（v1.4.0 特性3）：feedbackEnabled 开启即回喂项目级 + 用户级 MEMORY.md 全文
     // （逐行编号、无截断）。delete 由 allowDelete 决定（手动按钮传 true）。
@@ -185,17 +195,11 @@ export function createDistill({ ctx, getConfig, paths, records }) {
     const { finish, text, chunks, deltaChars, tFirstChunk } = result;
     dbg("session finish", { kind: finish?.kind, attempts: result.attempts });
     dbg("session stream done", { chunks, deltaChars, firstChunkMs: tFirstChunk });
-    // 本地调试（受 distillDebugLog + distillLogLevel==="debug" 双门控）：把 LLM 原始响应 text 原样打到 stderr，
-    // 并用分隔符整段包裹，便于从 stderr 一眼框住起止、不与其它 dbg 行混淆。
-    if (cfg().distillDebugLog && cfg().distillLogLevel === "debug") {
-      console.error("[memory-palace][debug] session llm raw text begin >>>");
-      console.error("--------------------------->");
-      console.error(text);
-      console.error("<----------------------------");
-      console.error("[memory-palace][debug] session llm raw text end <<<");
-    }
+    // 本地调试（受 distillDebugLog + distillLogLevel==="debug" 双门控）：LLM 原始响应写入 debug.log，
+    // 用分隔符整段包裹，便于一眼框住起止、不与其它 dbg 行混淆。
+    if (cfg().distillLogLevel === "debug") log?.raw(text);
     if (finish && finish.kind === "max-tokens") {
-      console.error("[memory-palace] distill warn: llm finish max-tokens (attempting partial JSON)", JSON.stringify({}));
+      dbgFail("session llm finish max-tokens (attempting partial JSON)", {});
     }
     if (!text) {
       dbgFail("empty llm text");
@@ -279,6 +283,9 @@ export function createDistill({ ctx, getConfig, paths, records }) {
   // 流程：读主目标 MEMORY.md → DISTILL_PROMPT 蒸馏 → 写 memory-cover.md（同目录，保证 rename 原子）
   // → 完整性检查 → 备份 MEMORY.md.{时间戳} → rename 覆盖 → cover 随 rename 消失。
   async function distillProjectMemory(cwd, session) {
+    const log = logFor(session);
+    const dbg = log ? log.dbg : noop;
+    const dbgFail = log ? log.dbgFail : noop;
     const c = cfg();
     if (!c.enabled) return { ok: false, message: "memory-palace 已停用。" };
     const dirs = paths.writeDirs(cwd);
@@ -338,14 +345,8 @@ export function createDistill({ ctx, getConfig, paths, records }) {
         return { ok: false, message: `蒸馏${kindZh}（重试 ${e?.attempts || 0} 次后仍失败）：${cls.message || ""}` };
       }
       const { finish, text, chunks, deltaChars, gotFirstChunk, tFirstChunk } = result;
-      // 本地调试（受 distillDebugLog + distillLogLevel==="debug" 双门控，与会话蒸馏路径一致）：分隔符包裹整段原始响应。
-      if (cfg().distillDebugLog && cfg().distillLogLevel === "debug") {
-        console.error("[memory-palace][debug] project llm raw text begin >>>");
-        console.error("--------------------------->");
-        console.error(text);
-        console.error("<----------------------------");
-        console.error("[memory-palace][debug] project llm raw text end <<<");
-      }
+      // 本地调试（受 distillDebugLog + distillLogLevel==="debug" 双门控，与会话蒸馏路径一致）：原始响应写入 debug.log。
+      if (cfg().distillLogLevel === "debug") log?.raw(text);
       if (finish && finish.kind === "max-tokens") {
         dbg("project finish", { kind: "max-tokens", attempts: result.attempts });
       } else {

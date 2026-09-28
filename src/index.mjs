@@ -30,6 +30,7 @@ import Schema from "@deepseek-ai/schemastery";
 // settingsNamespace，设置节注册改用 SettingsProvider 实例方法 installSection（经 ctx.inject(["settings"])）。
 import { extractText, extractToolErrorText } from "./common/text.mjs";
 import { createPaths } from "./common/paths.mjs";
+import { createLogger } from "./common/logger.mjs";
 import { planModeOf } from "./common/planmode.mjs";
 import { createRecords } from "./common/records.mjs";
 import { createDistill } from "./distill.mjs";
@@ -79,9 +80,9 @@ export const Config = Schema.object({
   // `silentPresets`（会话预设级静默）决定，不再有独立的写入闸门。
   summaryModel: Schema.string().default("").description("记忆插件当前使用的模型（手动「蒸馏会话」/「蒸馏项目记忆」与记忆子代理共用）。留空=复用当前会话 provider/model；也可填 provider/model（如 deepseek/deepseek-chat）固定廉价模型省 token。").volatile(),
   summaryTimeoutMs: Schema.number().default(60000).description("蒸馏 LLM 调用的超时（毫秒），超时视为失败并降级；覆盖手动「蒸馏会话」/「蒸馏项目记忆」与记忆子代理三条链路；默认 60000（60s）。").volatile(),
-  distillDebugLog: Schema.boolean().default(false).description("调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。distillLogLevel=info 时仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；distillLogLevel=debug 会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。").volatile(),
-  // ---- v1.4.1：蒸馏 stderr 日志级别（平铺键，不进 UI；默认 info；distillDebugLog=true 时生效） ----
-  distillLogLevel: Schema.string().default("info").description("蒸馏 stderr 日志级别：info=仅元数据诊断（默认，不打印 LLM 原始响应）；debug=额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障开启。无需 UI 配置，经 profile 的 cordis.patch.yml 在 memory-palace 条目 config 下设置 distillLogLevel 键（dsh 0.1.7 起 settings.yaml 已被宿主移除、导入 profile patch）。").volatile(),
+  distillDebugLog: Schema.boolean().default(false).description("调试开关：开启后把本插件**全部诊断日志落盘**（v1.8.0-alpha.4 起不再输出 stderr）。落点 = `<profile 目录>/.memory-palace/logs/<会话 id>/`（如 `$DSH_HOME/profiles/web/.memory-palace/logs/<sid>/`），按级别分文件：`info.log` 收失败/跳过留痕与子代理终态台账，`debug.log` 收详单（`distillLogLevel=debug` 时另含 LLM 原始响应）。关闭（默认）时零输出。单文件上限 1 MB、不自动清理。仅排障用").volatile(),
+  // ---- v1.4.1：蒸馏日志级别（平铺键，不进 UI；默认 info；distillDebugLog=true 时生效） ----
+  distillLogLevel: Schema.string().default("info").description("日志级别：`info`=只落盘元数据诊断（默认，不含 LLM 原始响应）；`debug`=额外把 LLM 原始响应文本落盘到 `debug.log`（分隔符包裹），仅限受信本地排障开启。无需 UI 配置，经 profile 的 cordis.patch.yml 在 memory-palace 条目 config 下设置 distillLogLevel 键（dsh 0.1.7 起 settings.yaml 已被宿主移除、导入 profile patch）。").volatile(),
   // ---- v1.4.0：手动「蒸馏会话」最终输出软预算（v1.4.1 起语义变更：prompt 软约束，思考不受限；实际硬上限由模型自身 maxTokens 决定） ----
   summaryMaxTokens: Schema.number().default(2000).description("手动「蒸馏会话」LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 2000；可调大以容纳更多 durable 事实。").volatile(),
   projectMaxTokens: Schema.number().default(8000).description("手动「蒸馏项目记忆」LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 8000。").volatile(),
@@ -248,7 +249,11 @@ export function apply(ctx, config) {
   // ---- 装配：路径解析 / 记录读写 / 蒸馏 / 工具 / route ----
   const paths = createPaths(() => source(), () => state.activeCwd);
   const records = createRecords({ getConfig: () => source(), paths });
-  const distill = createDistill({ ctx, getConfig: () => source(), paths, records });
+  // v1.8.0-alpha.4：统一日志落盘器——原 stderr 输出（含原「无条件」的失败留痕）全部改为落盘，
+  // 落点 `<profileDir>/.memory-palace/logs/<sessionId>/{info,debug}.log`，统一受 distillDebugLog 门控。
+  // 取径与分级依据见 src/common/logger.mjs 文件头。
+  const logger = createLogger({ ctx, getConfig: () => source() });
+  const distill = createDistill({ ctx, getConfig: () => source(), paths, records, logger });
   registerTools({ ctx, getConfig: () => source(), paths, state });
   registerApi({ ctx, paths, distill, getSettingsFace });
   // v1.8.0：记忆子代理模块（原 hybrid）。必须【无条件注册】——apply() 同步段执行时 settings 服务
@@ -261,7 +266,7 @@ export function apply(ctx, config) {
   // v1.7.0 特性1：E 投影通道（记忆正文常驻注入）。与 hybrid 同理，无条件注册——
   // 其内部读热配置，无副作用（enabled=false 或命中静默预设时 buildProjections 返回空）。
   // v1.7.2：把 isSessionSilent 透传下去——投影按**会话**判定，故必须知道 agent 所属会话的预设。
-  registerProjection({ ctx, getConfig: () => source(), paths, isSilent: isSessionSilent });
+  registerProjection({ ctx, getConfig: () => source(), paths, isSilent: isSessionSilent, logger });
 
   // ---------- v1.7.2：静默会话（enabled=false 或命中静默预设）的工具 schema 隐身 ----------
   // 背景：`complete: true` 只收缩 sections、**不裁剪 tools**——记忆工具的 schema 仍会经 toolProvider
@@ -309,7 +314,8 @@ export function apply(ctx, config) {
     } catch (error) {
       // 绝不冒泡：restrict 抛错（如某工具因异常未注册命中 unknown-tool）时降级为"不隐身"，
       // 由 execute 的 enabled 兜底保证功能仍停用，只是没省掉 schema token。
-      console.error(`[memory-palace] tool-hide skipped: ${error?.message || String(error)}`);
+      // v1.8.0-alpha.4：原 stderr 输出改为落盘（warn 级 → info.log），受 distillDebugLog 门控。
+      logger.for(sessionId, "plugin").dbgFail("tool-hide skipped", { message: error?.message || String(error) });
     }
   }
 
@@ -510,9 +516,18 @@ export function apply(ctx, config) {
         session,
         dirs,
         isError: effectiveIsError,
+        logger,
         // 断点按会话分桶：全局单值在并发会话下会被互相重置，导致子代理静默 noop、日志不落盘。
         getSeq: () => state.seqBySession.get(sid) ?? session?.firstLiveSeq ?? 0,
         setSeq: (v) => state.seqBySession.set(sid, v),
+      })
+      .then((r) => {
+        // v1.8.0-alpha.4 终态台账：每轮结算留一行（info 级 → info.log），把子代理结果与其已算好的
+        // 统计量落盘。原先这些量算完即弃，导致「本轮跑没跑、成没成、写了几条」无从查证。
+        // 写入本身同样受 distillDebugLog 门控（emit 内部判定），失败静默、绝不影响主流程。
+        logger.for(sid, "subagent").info(`done ok=${!!r?.ok} mode=${r?.mode ?? "?"}`, {
+          ...(r?.stats ?? {}), cwd: cwd ?? "", isError: effectiveIsError,
+        });
       })
       .catch(() => {});
   }

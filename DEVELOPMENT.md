@@ -12,7 +12,8 @@ dsh-memory-palace/
 │   │   ├── paths.mjs          #   createPaths 工厂（buddyDirs / writeDirs / memoryFileOf，cwd 参数化）
 │   │   ├── records.mjs        #   createRecords 工厂 + appendLineDedup / findMatches / prune 等
 │   │   ├── sections.mjs       #   章节纯函数：parse/locate/append/upsert/create/replace/markEntryDeleted（hybrid 用）
-│   │   └── retry.mjs          #   蒸馏 LLM 失败重试：classifyFailure / backoffDelayMs / runWithRetry（纯函数，可单测）
+│   │   ├── retry.mjs          #   蒸馏 LLM 失败重试：classifyFailure / backoffDelayMs / runWithRetry（纯函数，可单测）
+│   │   └── logger.mjs         #   统一日志落盘：createLogger（profile 目录 .memory-palace/logs/<sid>/{info,debug}.log，按级别分流）
 │   ├── hybrid/                # 记忆子代理独立模块（v1.8.0 起为唯一写入路径，由 index.mjs 无条件装配）
 │   │   ├── index.mjs          #   模块入口 registerHybrid（注册工具 + 闸门，返回 runMemorySubagent）
 │   │   ├── prompts.mjs        #   HYBRID_PROACTIVE（注入段二）/ SUBAGENT_SYSTEM（子代理 system prompt）
@@ -49,12 +50,73 @@ dsh-memory-palace/
 npm run build
 node tests/test-load.mjs            # 后端单测：加载、注入、日志写入、buddy 桥接、去重、memory_read
 node tests/test-hybrid.mjs          # hybrid 单测：章节纯函数、子代理循环（mock LLM）、重整双门禁
+node tests/test-subagent-log.mjs    # 日志落盘单测：门控 / 分级分流 / 隐私红线 / 多会话隔离 / 1MB 上限
+node tests/test-settle-cwd.mjs      # 写侧串台回归：并发结算下记忆与日志的双写隔离（真实 apply）
+node tests/test-session-cwd.mjs     # 读侧串台回归：多会话 cwd 隔离
+node tests/test-planmode-crosstalk.mjs  # plan 模式跨会话串台回归
+node tests/test-v1.4.1.mjs          # 蒸馏日志级别与预算语义
 node tests/test-v1.7.0.mjs          # 投影/路径/去噪/日志头单测
 node tests/test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section / header.utilities 注入
 node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable 落同级 MEMORY.md（含 cwd 错位场景）
 ```
 
 > 宿主的 `agent/pre-step` 等预览期契约可能随版本变动，升级 DSH 后需核对运行时包的类型声明（见「记忆注入通道」§7.4）。
+
+## 日志落盘
+
+v1.8.0-alpha.4 起，插件的**全部诊断输出改为落盘**，不再写 stderr。原因：Desktop 下插件 stderr 只进 host
+进程内存（`apps/desktop/src/host-process.ts` 存末 64KB），仅崩溃时随报告落盘——正常运行时完全不可见，
+子代理的失败/跳过因此无痕可查。
+
+实现：`src/common/logger.mjs`（`createLogger`），由 `src/index.mjs` 装配并注入 `distill.mjs` /
+`hybrid/subagent.mjs` / `projection.mjs`。
+
+### 开启方式与相关配置
+
+| 配置键 | 默认 | 说明 |
+|---|---|---|
+| `distillDebugLog` | `false` | **总开关**：`true` 才落盘；`false`（默认）时**零输出**——既不写文件也不写终端。设置页「记忆 → 开发」卡片可改 |
+| `distillLogLevel` | `info` | `info` = 只落元数据；`debug` = 额外把 **LLM 原始响应文本**落盘。**无 UI**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置 |
+
+> ⚠️ 默认配置下插件**完全静默**（连失败留痕也不落盘，异常告警 `projection skipped` / `tool-hide skipped`
+> 一并静默）——排查前必须先开 `distillDebugLog`。该值为 volatile，热改即生效、无需重启。
+
+### 落盘位置
+
+```
+$DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
+├── info.log     # warn / info 级：失败与跳过留痕、子代理终态台账
+└── debug.log    # debug 级：详单（模型解析 / 请求参数 / 流进度 / ops 统计）+ LLM 原始响应
+```
+
+- **按会话隔离**：`<session-id>` = 宿主会话 id（形如 `session-<uuid>`）；拿不到会话身份时落 `__nosession__/`
+- profile 目录经宿主 `profileContext` 服务取（`ctx.get('profileContext').dir`），CLI 与 Desktop 同一 `runProfile` 路径注入
+- 结构仿 dsh 原生 `@deepseek-ai/dsh-plugin-manager`（其日志在 `<profileDir>/.plugin-manager/logs/`）
+- 单文件上限 **1 MB**，超限停止追加（不删旧内容）；**不自动清理**
+- 目录 `0700` / 文件 `0600`（Windows 忽略 mode，同原生插件）
+
+### 行格式
+
+```
+2026-09-28 17:39:37.324 [debug] subagent · stream turn {"round":0,"chunks":938,"deltaChars":7799,"firstChunkMs":1457,"elapsedMs":27082}
+```
+
+`<本地时间戳> [<级别>] <模块> · <what> <JSON 元数据>`。时间戳用**本地时间**（非 UTC，与日志文件名同源教训）。
+
+### 模块与常用字段
+
+| 模块 | 典型行 | 用途 |
+|---|---|---|
+| `subagent` | `entry` · `stream turn` · `tool-calls round` · `tool ok` · `done` | 每轮记忆结算。`stream turn` 的 `firstChunkMs`（首包耗时）与 `elapsedMs`（总耗时）用于判断慢在**网关排队**还是**模型生成** |
+| `subagent`（台账） | `done ok=… mode=…`（落在 `info.log`） | 每轮一行，含 `appliedWrites` / `toolAttempts` / `unknownHits` / `retries` / `cwd` / `isError` |
+| `distill` | `session request` · `session stream done` · `session parsed` · `project …` | 手动蒸馏链路（含 `chunks` / `deltaChars` / `firstChunkMs`） |
+| `projection` · `plugin` | `projection skipped` · `tool-hide skipped` | 异常降级告警 |
+
+### 隐私
+
+- 元数据只含计数、字符数、模型名、路径等，**不含对话正文**
+- `distillLogLevel=debug` 时 LLM 原始响应会落 `debug.log` —— 该**仅限手动蒸馏链路**（子代理链路产出 ops、无原文），定位为「受信本地排障」，仅本地开启
+- 落点在 `$DSH_HOME`（宿主数据目录），**不在用户项目内**，不会被 git 提交
 
 ## 技术要点
 
@@ -154,7 +216,7 @@ node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable
 ### 7.4 🔴 契约风险与降级
 
 `agent/pre-step` 监听器抛错会让**整个 turn 失败**（宿主测试 `packages/acp/acp/tests/turns.spec.ts:150-156` 锚定），
-故钩子内**整体 try-catch**，异常时降级为「本步不投影」并打一行 stderr 线索，绝不冒泡。
+故钩子内**整体 try-catch**，异常时降级为「本步不投影」并留一行诊断，绝不冒泡。
 代价：契约失效时表现为**记忆正文不注入**而非报错。
 
 该通道依赖宿主预览期 API（`agent/pre-step` 事件、`createUserMessage`、`MessageSourceMap` 的 `form` 枚举、

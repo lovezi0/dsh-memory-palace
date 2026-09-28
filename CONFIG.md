@@ -56,8 +56,8 @@
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
 | 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖手动蒸馏与记忆子代理两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
-| 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：向 dsh 服务端 stderr 输出蒸馏 LLM 调用诊断。info 级别仅输出元数据（模型解析/请求参数/流进度/错误详情，不含文本）；配合 `distillLogLevel=debug`（见下）会额外打印 LLM 原始响应文本（分隔符包裹），仅限受信本地排障。平时关闭 |
-| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置（dsh 0.1.7 起 settings.yaml 已被宿主移除并一次性导入 profile）。可选 `info` \| `debug`：info=仅元数据诊断；debug=额外打印 LLM 原始响应。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
+| 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：开启后把本插件**全部诊断日志落盘**（v1.8.0-alpha.4 起不再输出 stderr）。落点 = `<profile 目录>/.memory-palace/logs/<会话 id>/`（如 `$DSH_HOME/profiles/web/.memory-palace/logs/<sid>/`）。按级别分文件：`info.log` 收失败/跳过留痕与子代理终态台账；`debug.log` 收详单（配合 `distillLogLevel=debug` 另含 LLM 原始响应文本）。关闭（默认）时零输出。单文件上限 1 MB、不自动清理。仅排障用 |
+| 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置（dsh 0.1.7 起 settings.yaml 已被宿主移除并一次性导入 profile）。可选 `info` \| `debug`：info=只落盘元数据诊断；debug=额外把 LLM 原始响应文本落盘到 `debug.log`。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
 
 > **设置保存**：设置页保存**真正落盘**（写入 settings.yaml），无需改配置文件。
 >

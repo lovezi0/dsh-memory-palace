@@ -124,6 +124,9 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.8.0**
+    - **1.8.0-alpha.4**
+        - 💥移除 stderr log 输出
+        - 💪新增不同 profiles 场景下 log文件 *详情见 [DEVELOPMENT.md](./DEVELOPMENT.md#日志落盘)*
     - **1.8.0-alpha.2**
         - 🐛修复多会话并发导致写侧串台 @sunligh91
         - 🐛删除会话分桶后遗留的三个全局状态死字段
