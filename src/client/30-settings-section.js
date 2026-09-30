@@ -453,7 +453,7 @@
             row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
           ]),
           // ---- v1.6.3：蒸馏/模型参数常显（v1.8.0 起 summaryModel 只被手动蒸馏与记忆子代理读取）----
-          // summaryMaxTokens/projectMaxTokens/feedbackEnabled 覆盖「蒸馏会话」+「蒸馏项目记忆」两条手动链路。
+          // v1.8.1：本组只剩 summaryModel / projectMaxTokens——「蒸馏会话」与回喂开关已随该功能移除。
           h("div", null, [
             row(t("summaryModelLabel"), t("summaryModelHint"),
               h("select", {
@@ -467,8 +467,6 @@
                 h("option", { value: "" }, "复用当前会话模型"),
                 ...modelOptions.map((o) => h("option", { value: o.value }, o.label))
               ]), "summaryModel"),
-            toggle(t("feedbackEnabledLabel"), t("feedbackEnabledHint"), "feedbackEnabled"),
-            row(t("summaryMaxTokensLabel"), t("summaryMaxTokensHint"), h("input", num("summaryMaxTokens")), "summaryMaxTokens"),
             row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
           ])
         ]),

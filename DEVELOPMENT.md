@@ -7,10 +7,10 @@ dsh-memory-palace/
 ├── src/
 │   ├── index.mjs              # 插件后端入口（cordis 插件：name/Config/inject/apply，薄装配层：闭包运行时 + 工厂装配）
 │   ├── common/                # 纯函数与常量（零状态，可独立单测）
-│   │   ├── prompts.mjs        #   SUMMARY_PROMPT / DISTILL_PROMPT（v1.8.0 起无 SCENE_KEYWORDS）
+│   │   ├── prompts.mjs        #   DISTILL_PROMPT（v1.8.0 起无 SCENE_KEYWORDS；v1.8.1 起无 SUMMARY_PROMPT）
 │   │   ├── text.mjs           #   todayISO / nowStamp / budgetClip / blockText / extractText / stripDeletedLines 等
 │   │   ├── paths.mjs          #   createPaths 工厂（buddyDirs / writeDirs / memoryFileOf，cwd 参数化）
-│   │   ├── records.mjs        #   createRecords 工厂 + appendLineDedup / findMatches / prune 等
+│   │   ├── records.mjs        #   appendLineDedup / findMatches / removeLineByMatch / recentLogDates（纯函数）
 │   │   ├── sections.mjs       #   章节纯函数：parse/locate/append/upsert/create/replace/markEntryDeleted（hybrid 用）
 │   │   ├── retry.mjs          #   蒸馏 LLM 失败重试：classifyFailure / backoffDelayMs / runWithRetry（纯函数，可单测）
 │   │   └── logger.mjs         #   统一日志落盘：createLogger（profile 目录 .memory-palace/logs/<sid>/{info,debug}.log，按级别分流）
@@ -19,7 +19,7 @@ dsh-memory-palace/
 │   │   ├── prompts.mjs        #   HYBRID_PROACTIVE（注入段二）/ SUBAGENT_SYSTEM（子代理 system prompt）
 │   │   ├── subagent.mjs       #   记忆子代理：ctx.llm.stream + tools 自建工具循环（log_read_section/log_write_ops）
 │   │   └── tools.mjs          #   memory_write / memory_update_section / memory_reorganize + pre-execute 闸门
-│   ├── distill.mjs            # 蒸馏核心：distillSessionCore / distillProjectMemory（乐观锁 + 原子覆盖）
+│   ├── distill.mjs            # 蒸馏核心：distillProjectMemory（乐观锁 + 原子覆盖）
 │   ├── tools.mjs              # 四个记忆工具（memory_note / _user / _read / _delete）+ pre-execute 删除确认闸门
 │   ├── api.mjs                # /memory-palace/api route（设置读写 + 手动蒸馏，HTTP trust-fence）
 │   └── client/                # 前端 client 源码（build 按序零依赖拼接为 lib/client.js 单 bundle）
@@ -34,12 +34,12 @@ dsh-memory-palace/
 │   └── build.mjs              # 构建：服务端递归复制 + index.js 入口重命名 + client 按序拼接（零外部依赖）
 ├── cordis.patch.yml           # bundle patch：向 profile 注入本插件配置
 ├── tests/                     # 测试脚本（node 直接运行，无测试框架依赖）
-│   ├── test-load.mjs          # 后端 cordis 单测（注入/轻量兜底/错误捕获/桥接/去重/删除/确认弹窗/重试/回喂等 179 项）
+│   ├── test-load.mjs          # 后端 cordis 单测（注入/桥接/去重/删除/确认弹窗/蒸馏重试等 136 项）
 │   ├── test-hybrid.mjs        # hybrid 单测（章节纯函数/子代理循环 mock/reorganize 门禁，20 项断言）
 │   ├── test-v1.7.0.mjs        # 投影身份判据/路径/去噪/日志头单测（39 项）
 │   ├── test-v1.4.1.mjs        # budgetClip / stripSmartTag 定向回归
-│   ├── test-client-smoke.mjs  # 前端 client bundle 冒烟测试
-│   └── verify-distill-route.mjs # 蒸馏 route 定向回归（activeCwd≠会话 cwd 时 durable 正确落同级 MEMORY.md）
+│   ├── test-distill-route.mjs # 手动蒸馏 route 回归：distill.session 404 / preview size / project 原子替换
+│   └── test-client-smoke.mjs  # 前端 client bundle 冒烟测试
 ├── lib/                       # 构建产物（由 src/ 生成，勿手改）
 └── package.json
 ```
@@ -56,8 +56,8 @@ node tests/test-session-cwd.mjs     # 读侧串台回归：多会话 cwd 隔离
 node tests/test-planmode-crosstalk.mjs  # plan 模式跨会话串台回归
 node tests/test-v1.4.1.mjs          # 蒸馏日志级别与预算语义
 node tests/test-v1.7.0.mjs          # 投影/路径/去噪/日志头单测
+node tests/test-distill-route.mjs   # 蒸馏 route 回归：distill.session 404 / preview size / project 原子替换
 node tests/test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section / header.utilities 注入
-node tests/verify-distill-route.mjs # 蒸馏 route 回归：手动蒸馏 durable 落同级 MEMORY.md（含 cwd 错位场景）
 ```
 
 > 宿主的 `agent/pre-step` 等预览期契约可能随版本变动，升级 DSH 后需核对运行时包的类型声明（见「记忆注入通道」§7.4）。
@@ -109,7 +109,7 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 |---|---|---|
 | `subagent` | `entry` · `stream turn` · `tool-calls round` · `tool ok` · `done` | 每轮记忆结算。`stream turn` 的 `firstChunkMs`（首包耗时）与 `elapsedMs`（总耗时）用于判断慢在**网关排队**还是**模型生成** |
 | `subagent`（台账） | `done ok=… mode=…`（落在 `info.log`） | 每轮一行，含 `appliedWrites` / `toolAttempts` / `unknownHits` / `retries` / `cwd` / `isError` |
-| `distill` | `session request` · `session stream done` · `session parsed` · `project …` | 手动蒸馏链路（含 `chunks` / `deltaChars` / `firstChunkMs`） |
+| `distill` | `project entry` · `project loaded` · `project request` · `project finish` · `project write done` | 项目记忆蒸馏链路（含 `chunks` / `deltaChars` / `firstChunkMs`）；v1.8.1 起原会话蒸馏事件（`session request` / `session parsed` 等）已随该功能移除 |
 | `projection` · `plugin` | `projection skipped` · `tool-hide skipped` | 异常降级告警 |
 
 ### 隐私
@@ -236,7 +236,7 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 
 ## 蒸馏 —— 失败重试
 
-蒸馏（会话摘要 `distillSessionCore` + 项目记忆 `distillProjectMemory`）的 LLM 调用经 `src/common/retry.mjs` 的 `runWithRetry` 包裹，单次尝试由 `distill.mjs` 内的 `streamOnce` 负责（每次新建独立 `AbortSignal`，避免单次超时耗尽累计预算）。
+项目记忆蒸馏（`distillProjectMemory`）的 LLM 调用经 `src/common/retry.mjs` 的 `runWithRetry` 包裹，单次尝试由 `distill.mjs` 内的 `streamOnce` 负责（每次新建独立 `AbortSignal`，避免单次超时耗尽累计预算）。
 
 真源代码：`src/common/retry.mjs`（`classifyFailure` / `backoffDelayMs` / `runWithRetry` / `RETRY_CONSTANTS` / `LlmRetryExhausted`）。
 
@@ -277,7 +277,6 @@ attempt 从 0 起算（第 1 次重试前等待 base_delay）
 
 - `limited` / `retryable` 在次数上限内指数退避重试：`500` 类上限取 `HTTP500_MAX_RETRIES`，其余取 `MAX_RETRIES`。
 - `fatal` 立即抛出 `LlmRetryExhausted`（携带 `cls` 分类与 `attempts` 尝试次数），由调用方降级：
-  - 会话摘要（`distillSessionCore`）→ 回退轻量条目；
   - 项目蒸馏（`distillProjectMemory`）→ 返回失败消息，**原记忆不动**。
 - 成功 / `max-tokens` 直接返回（文本解析交给 caller；JSON 解析失败自然回落轻量兜底）。
 
@@ -287,4 +286,4 @@ attempt 从 0 起算（第 1 次重试前等待 base_delay）
 - `max-tokens` **不算失败**，正常返回已有文本供 caller 解析。
 - 蒸馏 chat completion 幂等，重试安全；若有函数调用副作用需另行评估幂等性。
 
-提示词与蒸馏契约见 [PROMPTS.md](./PROMPTS.md)；配置项（超时 / 调试日志 / 最大 Token）见 [CONFIG.md](./CONFIG.md)。
+提示词与蒸馏契约见 [PROMPTS.md](./PROMPTS.md)；配置项（超时 / 调试日志 / 项目最大 Token）见 [CONFIG.md](./CONFIG.md)。

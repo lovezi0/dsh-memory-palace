@@ -32,7 +32,6 @@ import { extractText, extractToolErrorText } from "./common/text.mjs";
 import { createPaths } from "./common/paths.mjs";
 import { createLogger } from "./common/logger.mjs";
 import { planModeOf } from "./common/planmode.mjs";
-import { createRecords } from "./common/records.mjs";
 import { createDistill } from "./distill.mjs";
 import { registerTools } from "./tools.mjs";
 import { registerApi } from "./api.mjs";
@@ -78,16 +77,15 @@ export const Config = Schema.object({
   // 旧 profile 若仍写着这些键，作为未知键原样透传、静默失效；用户下次在设置页保存时自动从 profile patch 消失。
   // 「记忆写入总开关」也一并删除（v1.8.0）：写入是否发生改由 `enabled`（profile config 级停用）与
   // `silentPresets`（会话预设级静默）决定，不再有独立的写入闸门。
-  summaryModel: Schema.string().default("").description("记忆插件当前使用的模型（手动「蒸馏会话」/「蒸馏项目记忆」与记忆子代理共用）。留空=复用当前会话 provider/model；也可填 provider/model（如 deepseek/deepseek-chat）固定廉价模型省 token。").volatile(),
-  summaryTimeoutMs: Schema.number().default(60000).description("蒸馏 LLM 调用的超时（毫秒），超时视为失败并降级；覆盖手动「蒸馏会话」/「蒸馏项目记忆」与记忆子代理三条链路；默认 60000（60s）。").volatile(),
+  summaryModel: Schema.string().default("").description("记忆插件当前使用的模型（手动「蒸馏项目记忆」与记忆子代理共用）。留空=复用当前会话 provider/model；也可填 provider/model（如 deepseek/deepseek-chat）固定廉价模型省 token。").volatile(),
+  summaryTimeoutMs: Schema.number().default(60000).description("蒸馏 LLM 调用的超时（毫秒），超时视为失败并降级；覆盖手动「蒸馏项目记忆」与记忆子代理两条链路；默认 60000（60s）。").volatile(),
   distillDebugLog: Schema.boolean().default(false).description("调试开关：开启后把本插件**全部诊断日志落盘**（v1.8.0-alpha.4 起不再输出 stderr）。落点 = `<profile 目录>/.memory-palace/logs/<会话 id>/`（如 `$DSH_HOME/profiles/web/.memory-palace/logs/<sid>/`），按级别分文件：`info.log` 收失败/跳过留痕与子代理终态台账，`debug.log` 收详单（`distillLogLevel=debug` 时另含 LLM 原始响应）。关闭（默认）时零输出。单文件上限 1 MB、不自动清理。仅排障用").volatile(),
   // ---- v1.4.1：蒸馏日志级别（平铺键，不进 UI；默认 info；distillDebugLog=true 时生效） ----
   distillLogLevel: Schema.string().default("info").description("日志级别：`info`=只落盘元数据诊断（默认，不含 LLM 原始响应）；`debug`=额外把 LLM 原始响应文本落盘到 `debug.log`（分隔符包裹），仅限受信本地排障开启。无需 UI 配置，经 profile 的 cordis.patch.yml 在 memory-palace 条目 config 下设置 distillLogLevel 键（dsh 0.1.7 起 settings.yaml 已被宿主移除、导入 profile patch）。").volatile(),
-  // ---- v1.4.0：手动「蒸馏会话」最终输出软预算（v1.4.1 起语义变更：prompt 软约束，思考不受限；实际硬上限由模型自身 maxTokens 决定） ----
-  summaryMaxTokens: Schema.number().default(2000).description("手动「蒸馏会话」LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 2000；可调大以容纳更多 durable 事实。").volatile(),
+  // ---- v1.4.0：手动「蒸馏项目记忆」最终输出软预算（v1.4.1 起语义变更：prompt 软约束，思考不受限；实际硬上限由模型自身 maxTokens 决定） ----
+  // v1.8.1：原 summaryMaxTokens（会话蒸馏输出预算）与 feedbackEnabled（回喂存量记忆）
+  // 已随「蒸馏会话」功能整体摘除；老 profile 里的旧值作为未知键透传、静默失效。
   projectMaxTokens: Schema.number().default(8000).description("手动「蒸馏项目记忆」LLM 的最终输出软预算（prompt 约束，思考不受限；实际硬上限由模型自身 maxTokens 决定）。默认 8000。").volatile(),
-  // ---- v1.4.0：蒸馏时回喂存量记忆（特性3，默认关；开启后手动蒸馏按钮回喂，delete 仅手动放开） ----
-  feedbackEnabled: Schema.boolean().default(false).description("每次蒸馏时把项目级 + 用户级 MEMORY.md 全文（逐行编号、无截断）回喂给 LLM，使其能基于既有记忆做增量维护（delete 手动蒸馏按钮开放）。自动路径走记忆子代理、自带日志回喂，不受此项影响。默认关。").volatile(),
   // ---- v1.6.0：记忆子代理配置 ----
   reorgCooldownDays: Schema.number().default(7).description("项目级 MEMORY.md 全量重整的冷却天数（距上次重整）。与「超出注入预算」（`workspaceBudgetChars`，即项目级 MEMORY.md 大于该值）双条件同时满足才允许 memory_reorganize；时间戳以 HTML 注释落在 MEMORY.md 文件尾。").volatile(),
   subagentLogBudget: Schema.number().default(20000).description("记忆子代理回喂今日工作日志的字符上限。超出时仅回喂章节目录，子代理用 log_read_section 按需读取章节。").volatile(),
@@ -173,7 +171,7 @@ export function apply(ctx, config) {
   });
   const getSettingsFace = () => settingsFace;
 
-  // ---- 运行时状态（跨模块共享的可变状态；distill/tools/api/records 经工厂注入读取） ----
+  // ---- 运行时状态（跨模块共享的可变状态；distill/tools/api 经工厂注入读取） ----
   const state = {
     activeCwd: null,          // 最近活跃 session 的 cwd（session/event 更新）
     activeSession: null,      // 最近活跃 session 引用
@@ -246,14 +244,13 @@ export function apply(ctx, config) {
     return preset !== undefined && list.includes(preset);
   }
 
-  // ---- 装配：路径解析 / 记录读写 / 蒸馏 / 工具 / route ----
+  // ---- 装配：路径解析 / 蒸馏 / 工具 / route ----
   const paths = createPaths(() => source(), () => state.activeCwd);
-  const records = createRecords({ getConfig: () => source(), paths });
   // v1.8.0-alpha.4：统一日志落盘器——原 stderr 输出（含原「无条件」的失败留痕）全部改为落盘，
   // 落点 `<profileDir>/.memory-palace/logs/<sessionId>/{info,debug}.log`，统一受 distillDebugLog 门控。
   // 取径与分级依据见 src/common/logger.mjs 文件头。
   const logger = createLogger({ ctx, getConfig: () => source() });
-  const distill = createDistill({ ctx, getConfig: () => source(), paths, records, logger });
+  const distill = createDistill({ ctx, getConfig: () => source(), paths, logger });
   registerTools({ ctx, getConfig: () => source(), paths, state });
   registerApi({ ctx, paths, distill, getSettingsFace });
   // v1.8.0：记忆子代理模块（原 hybrid）。必须【无条件注册】——apply() 同步段执行时 settings 服务
@@ -262,7 +259,7 @@ export function apply(ctx, config) {
   // registerHybrid 未执行 → 子代理 TypeError 被吞、日志全空）。
   // 运行时分派靠 _settle / proactive 的热 source() 判断；工具注册无副作用（enabled=false 或静默
   // 会话下 execute 内有兜底）。
-  const hybrid = registerHybrid({ ctx, getConfig: () => source(), paths, records, state });
+  const hybrid = registerHybrid({ ctx, getConfig: () => source(), paths, state });
   // v1.7.0 特性1：E 投影通道（记忆正文常驻注入）。与 hybrid 同理，无条件注册——
   // 其内部读热配置，无副作用（enabled=false 或命中静默预设时 buildProjections 返回空）。
   // v1.7.2：把 isSessionSilent 透传下去——投影按**会话**判定，故必须知道 agent 所属会话的预设。
@@ -511,7 +508,6 @@ export function apply(ctx, config) {
         ctx,
         getConfig: () => source(),
         paths,
-        records,
         state,
         session,
         dirs,

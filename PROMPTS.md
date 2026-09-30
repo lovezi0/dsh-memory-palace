@@ -3,7 +3,7 @@
 > **说明文档，非真源。** 本插件所有提示词的真源在 `src/`：
 > - 系统提示词注入：`src/index.mjs`（`text()` 闭包）
 > - 记忆投影（非提示词，但决定模型可见内容）：`src/projection.mjs`
-> - 会话蒸馏 / 项目蒸馏：`src/common/prompts.mjs`
+> - 项目蒸馏：`src/common/prompts.mjs`
 > - 记忆分工 / 子代理提示词：`src/hybrid/prompts.mjs`（`HYBRID_PROACTIVE` / `SUBAGENT_SYSTEM`）
 > - 失败重试：`src/common/retry.mjs`
 >
@@ -20,12 +20,12 @@
 | **记忆正文投影** | **用户级/项目级 MEMORY.md + 今日日志** | **`src/projection.mjs`** | **每 step 经 `agent/pre-step` 注入为常驻 user 消息（不在 section 内）** |
 | 路径简写硬约束 | `antiMangle` | `src/index.mjs` | 随 system prompt 注入（始终） |
 | plan 模式禁写提示 | `planNote` | `src/index.mjs` | 仅 plan 模式激活时追加 |
-| 会话蒸馏 | `SUMMARY_PROMPT({allowDelete:true})` | `src/common/prompts.mjs` | 手动「蒸馏会话」按钮 → `distillSessionCore` |
 | 项目记忆蒸馏 | `DISTILL_PROMPT` | `src/common/prompts.mjs` | 手动「蒸馏项目记忆」按钮 |
 | **记忆分工说明（段二）** | **`HYBRID_PROACTIVE`** | **`src/hybrid/prompts.mjs`** | **每轮 system prompt 段二（随 `text()` 注入）** |
 | **记忆子代理 system prompt** | **`SUBAGENT_SYSTEM()`** | **`src/hybrid/prompts.mjs`** | **每轮 turn/end 触发 `runMemorySubagent`** |
 
-> v1.8.0：`SCENE_KEYWORDS`（防闲聊闸门关键词）与 `smart` 模式的自动摘要入口 `summarizeTurn` 已随模式一并删除；`SUMMARY_PROMPT` 仍在，但唯一调用方是手动「蒸馏会话」按钮。
+> v1.8.0：`SCENE_KEYWORDS`（防闲聊闸门关键词）与 `smart` 模式的自动摘要入口 `summarizeTurn` 已随模式一并删除。
+> v1.8.1：`SUMMARY_PROMPT` 已随「蒸馏会话」功能整体移除；手动链路只剩项目记忆蒸馏。
 
 ---
 
@@ -81,47 +81,6 @@
 
 ---
 
-## 三、会话蒸馏 Prompt `SUMMARY_PROMPT`
-
-真源：`src/common/prompts.mjs`。函数式，支持回喂存量记忆。
-
-### 3.1 用途与触发
-**手动「蒸馏会话」按钮**（`api.mjs` → `distillSessionCore(session, dirs, 0, {allowDelete:true})`）调用，让 LLM 把「新产生的对话」提炼为结构化摘要 + 跨 session durable 事实 + 可选记忆增量维护。
-
-> v1.8.0：原 `smart` 模式的自动入口 `summarizeTurn` 已删除；`distillSessionCore` 本身保留（手动按钮共用），故本 prompt 与其 `outputBudget` 配置项均保留。
-
-### 3.2 函数签名
-```js
-SUMMARY_PROMPT({ allowDelete = false, outputBudget } = {})
-```
-- `allowDelete = true`：**手动蒸馏按钮**场景，开放 `add` / `replace` / `delete` 三类记忆维护指令（当前唯一调用方式）。
-- `allowDelete = false`：保留分支，仅开放 `add` / `replace`、**禁止 delete**（供未来只读回放类调用）。
-- `outputBudget`：最终输出软预算 token 数（取自 `summaryMaxTokens`，默认 2000）。注入 prompt 的【输出长度约束】：最终 JSON 控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；**思考/推理不受限**，但成稿须精炼不超预算。该值仅作为 prompt 软约束，**不**传给 harness API、更不乘倍——API 层已不传 `maxTokens`，思考+输出合计靠模型自身原生帽兜底。
-
-> 注意：回喂是否实际发生由 `distill.mjs` 按 `cfg().feedbackEnabled` 决定（**仅手动蒸馏生效**）；本 prompt 仅声明能力边界——`allowDelete` 决定 prompt 是否允许 delete 指令。
-
-### 3.3 输出契约（LLM 返回 JSON）
-```json
-{
-  "summary": "一段客观第三人称中文摘要（做了什么/关键结果）",
-  "durable": [{ "scope": "project|user", "fact": "一句话客观事实" }],
-  "memoryOps": [
-    { "op": "add", "scope": "project", "fact": "..." },
-    { "op": "replace", "line": 12, "oldText": "精确原文", "newText": "替换后全文" },
-    { "op": "delete", "line": 7, "oldText": "精确原文" }
-  ]
-}
-```
-- `durable` 最多 3 条；`scope`：`project`=项目约定/决策，`user`=跨项目个人偏好。闲聊/一次性/错误现象不提炼。
-- `memoryOps` 的 `replace`/`delete` 必须带 `oldText` 精确匹配（匹配失败被拒、不改任何内容）；结构行（`#` / `<!--`）受保护，禁删。
-
-### 3.4 输出风格硬约束（防污染）
-- summary 必须**客观、第三人称、陈述性**；**严禁**提问/提议/请示/寒暄/自我指涉/内心独白/对话体——在写记忆，不在对话。
-- durable 每条必须**可独立成立的客观事实**；严禁把「助手说过的话/未确认提议」当事实。
-- 仅含未决提问无结论 → summary 写「本次对话为未决讨论，暂无确定结论」，durable 留空，绝不照抄对话体。
-
----
-
 ## 四、记忆子代理提示词
 
 真源：`src/hybrid/prompts.mjs`。
@@ -167,7 +126,7 @@ hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.m
 真源：`src/common/prompts.mjs`。
 
 ### 5.1 用途与触发
-手动「蒸馏项目记忆」按钮调用：system = 本 prompt（函数式，注入 `outputBudget`），user = 项目 `MEMORY.md` 全文，输出 = 精炼后的项目记忆，**直接覆盖写回**（手动蒸馏开放 delete，`allowDelete:true`）。
+手动「蒸馏项目记忆」按钮调用：system = 本 prompt（函数式，注入 `outputBudget`），user = 项目 `MEMORY.md` 全文，输出 = 精炼后的项目记忆，**直接覆盖写回**（先写 `memory-cover.md` 校验完整，再备份 + rename 原子替换；失败则原记忆不动）。
 
 `DISTILL_PROMPT({ outputBudget } = {})`。`outputBudget` 取自 `projectMaxTokens`（默认 8000），注入【输出长度约束】：提炼后的项目记忆控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；思考不受限，成稿须精炼不超预算。该值仅 prompt 软约束，**不**传给 API（API 层不传 maxTokens，靠模型原生帽兜底）。
 

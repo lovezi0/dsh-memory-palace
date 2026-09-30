@@ -7,11 +7,11 @@ import { registerHybridTools, attachHybridGuards } from "./tools.mjs";
 export { HYBRID_PROACTIVE } from "./prompts.mjs";
 
 /**
- * @param {{ ctx: object, getConfig: () => object, paths: object, records: object, state: object }} deps
+ * @param {{ ctx: object, getConfig: () => object, paths: object, state: object }} deps
  * @returns {{ runMemorySubagent: Function }}
  */
-export function registerHybrid({ ctx, getConfig, paths, records, state }) {
-  registerHybridTools({ ctx, getConfig, paths, records, state });
+export function registerHybrid({ ctx, getConfig, paths, state }) {
+  registerHybridTools({ ctx, getConfig, paths, state });
   attachHybridGuards(ctx, getConfig, paths, state);
   return { runMemorySubagent };
 }

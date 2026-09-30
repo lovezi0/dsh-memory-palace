@@ -77,7 +77,7 @@ async function streamTurn(ctx, params, timeoutMs) {
   return { finish, asm, stats: { chunks, deltaChars, firstChunkMs: tFirstChunk, elapsedMs: Date.now() - t0 } };
 }
 
-// 把本轮 surface 事件投影为消息数组（seq >= fromSeq；与 distillSessionCore 同源逻辑）。
+// 把本轮 surface 事件投影为消息数组（seq >= fromSeq）。
 // v1.6.2-alpha.4：eventsFrom 兼容层（宿主 0.1.2-alpha.4 删除 Session.events getter）。
 // v1.7.0 特性3（投影去噪）：user 侧排除【注入类消息】，只留真实用户对话。
 // 旧实现只看事件类型不看 source，导致首轮 lastSummarizedSeq 较小时把 agent-instructions

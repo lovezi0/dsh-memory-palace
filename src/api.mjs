@@ -1,4 +1,4 @@
-// memory-palace 自有同源 route（/memory-palace/api）：设置读写（真保存）+ 手动蒸馏（会话/项目）。
+// memory-palace 自有同源 route（/memory-palace/api）：设置读写（真保存）+ 手动蒸馏（项目记忆）。
 // 经 registerApi 注入 ctx/paths/distill/运行时状态/设置面；在 index.mjs 装配时调用一次。
 // 机制（v1.1.3）：client 直接 fetch 本 route，handler 内走服务端 settings.replace → settings-file 持久化，
 // 绕开 settingsScope（非 loopback 下 set() no-op）与 apiproxy allowlist 两层限制（参考 dsh-better-sidebar）。
@@ -161,7 +161,8 @@ export function registerApi({ ctx, paths, distill, getSettingsFace }) {
               return;
             }
             // ---- v1.2.0 手动蒸馏（会话标题栏「记忆」按钮）----
-            if (method === "distill.session" || method === "distill.project" || method === "distill.project.preview") {
+            // v1.8.1：只剩「蒸馏项目记忆」；原 distill.session 分支已随该功能移除。
+            if (method === "distill.project" || method === "distill.project.preview") {
               const sid = typeof payload?.sessionId === "string" ? payload.sessionId : "";
               // sessions 服务不在顶层 inject（测试环境无此服务时插件仍应激活），route 内惰性解析。
               let session = null;
@@ -177,16 +178,6 @@ export function registerApi({ ctx, paths, distill, getSettingsFace }) {
               const cwd = session.header?.cwd ?? null;
               if (!cwd) {
                 throw Object.assign(new Error("session has no cwd"), { code: "bad-request", status: 400 });
-              }
-              if (method === "distill.session") {
-                const dirs = paths.writeDirs(cwd);
-                if (!dirs.length) {
-                  throw Object.assign(new Error("no memory dirs for this workspace"), { code: "bad-request", status: 400 });
-                }
-                // 整段会话全量蒸馏（fromSeq=0）；allowDelete:true —— 手动按钮开放 delete 操作。
-                const r = await distill.distillSessionCore(session, dirs, 0, { allowDelete: true });
-                apiWriteOk(res, r);
-                return;
               }
               if (method === "distill.project.preview") {
                 const dirs = paths.writeDirs(cwd);

@@ -21,7 +21,20 @@
         "@keyframes mpd-tw2{0%,100%{opacity:1}50%{opacity:.3}}",
         ".mpd-star-big{animation:mpd-tw1 2s ease-in-out infinite}",
         ".mpd-star-small{animation:mpd-tw2 1.5s ease-in-out infinite .5s}",
-        ".mpd-item:hover{background:var(--dsw-alias-interactive-bg-hover,#f2f3f5)}"
+        ".mpd-item:hover{background:var(--dsw-alias-interactive-bg-hover,#f2f3f5)}",
+        // v1.8.1：「记忆」胶囊按钮改由 class 驱动，尺寸对齐同槽位原生 Open In 按钮
+        // （ui-open-in-app/OpenTargetButton.module.css 的 .split/.main：24px 高 / 11px 字号 / 16px 行高 /
+        //  radius-sm 圆角 / 0.5px l4 边框 / padding 3px 8px / gap 4px）。
+        // box-sizing:border-box 必须显式写：宿主 web 应用没有全局 border-box 重置，
+        // 缺它会把 24px 撑成 24+6(padding)+1(border)=31px，超出行容器 30px 的最小高度、把标题栏顶高。
+        ".mpd-pill{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;gap:4px;",
+        "height:24px;padding:3px 8px;",
+        "border:0.5px solid var(--dsw-alias-border-l4,#e5e7eb);border-radius:var(--dsw-radius-sm,6px);background:transparent;",
+        "color:var(--dsw-alias-label-primary,#1f2329);font-family:var(--dsw-font-family,inherit);font-size:11px;",
+        "font-weight:400;line-height:16px;white-space:nowrap;cursor:pointer;}",
+        ".mpd-pill svg{display:block;}",
+        ".mpd-pill:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#f2f3f5);}",
+        ".mpd-pill:disabled{opacity:.6;cursor:wait;}"
       ].join("");
       document.head.appendChild(style);
     }

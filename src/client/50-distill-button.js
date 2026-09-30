@@ -1,13 +1,13 @@
-    // 会话标题栏「记忆」胶囊按钮：点击开合下拉（蒸馏会话/蒸馏项目记忆）→ 自绘确认弹窗 → fetch route → 浏览器通知。
+    // 会话标题栏「记忆」胶囊按钮：点击开合下拉（仅「蒸馏项目记忆」）→ 自绘确认弹窗 → fetch route → 浏览器通知。
+    // v1.8.1：原「蒸馏会话」下拉项与整条会话蒸馏链路已移除，本按钮只剩项目记忆蒸馏。
     function DistillButton(props) {
       const h = react.createElement;
       const { sessionId, t } = props;
       const [open, setOpen] = react.useState(false);
-      const [confirming, setConfirming] = react.useState(null); // "session" | "project" | null
+      const [confirming, setConfirming] = react.useState(null); // "project" | null
       const [busy, setBusy] = react.useState(false);
       const [status, setStatus] = react.useState(""); // Notification 未授权时的内联降级提示
       const [size, setSize] = react.useState(null);
-      const [hover, setHover] = react.useState(false);
 
       react.useEffect(() => { injectDistillStyles(); }, []);
 
@@ -47,27 +47,24 @@
         window.setTimeout(() => setStatus(""), 8000);
       }
 
-      async function pick(kind) {
+      // 唯一入口「蒸馏项目记忆」：先取当前 MEMORY.md 字符数（供确认弹窗提示），再开确认弹窗。
+      async function pick() {
         setOpen(false);
-        if (kind === "project") {
-          const r = await apiCall("distill.project.preview", { sessionId });
-          const v = r && r.ok && r.value ? r.value : null;
-          setSize(v && typeof v.size === "number" ? v.size : null);
-        }
-        setConfirming(kind);
+        const r = await apiCall("distill.project.preview", { sessionId });
+        const v = r && r.ok && r.value ? r.value : null;
+        setSize(v && typeof v.size === "number" ? v.size : null);
+        setConfirming("project");
       }
 
       async function run() {
-        const kind = confirming;
         setConfirming(null);
         setBusy(true);
         try {
-          const method = kind === "session" ? "distill.session" : "distill.project";
-          const r = await apiCall(method, { sessionId });
+          const r = await apiCall("distill.project", { sessionId });
           const v = r && r.ok ? r.value : null;
           const errMsg = r && r.error && r.error.message ? r.error.message : "";
           if (v && v.ok === true) {
-            notify(kind === "session" ? t("notifySessionDone") : t("notifyProjectDone"), (v.summary || v.message || "").slice(0, 120));
+            notify(t("notifyProjectDone"), (v.message || "").slice(0, 120));
           } else {
             notify(t("notifyFail"), errMsg || (v && v.message) || "");
           }
@@ -86,26 +83,6 @@
         borderRight: "3px solid transparent",
         borderTop: "4px solid currentColor",
         opacity: 0.65
-      };
-      // 胶囊按钮样式对齐「Session log」下载按钮（HeaderAction.module.css）。
-      const pillStyle = {
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "5px",
-        height: "32px",
-        padding: "6px 12px",
-        border: "1px solid var(--dsw-alias-border-l2, #e5e7eb)",
-        borderRadius: "18px",
-        background: hover ? "var(--dsw-alias-interactive-bg-hover, #f2f3f5)" : "transparent",
-        color: "var(--dsw-alias-label-primary, #1f2329)",
-        fontFamily: "var(--dsw-font-family, inherit)",
-        fontSize: "13px",
-        fontWeight: 400,
-        lineHeight: "20px",
-        cursor: busy ? "wait" : "pointer",
-        whiteSpace: "nowrap",
-        opacity: busy ? 0.7 : 1
       };
       const menuStyle = {
         position: "absolute",
@@ -192,12 +169,10 @@
       return h("div", { "data-memory-palace-distill": "", style: { position: "relative", display: "inline-flex" } }, [
         h("button", {
           type: "button",
-          style: pillStyle,
+          className: "mpd-pill",
           disabled: busy,
           title: t("btnMemory"),
-          onClick: () => setOpen(!open),
-          onMouseEnter: () => setHover(true),
-          onMouseLeave: () => setHover(false)
+          onClick: () => setOpen(!open)
         }, [
           h("span", { dangerouslySetInnerHTML: { __html: SPARKLE_SVG } }),
           h("span", null, busy ? t("distilling") : t("btnMemory")),
@@ -205,8 +180,7 @@
         ]),
         open
           ? h("div", { style: menuStyle }, [
-              h("div", { className: "mpd-item", style: itemStyle, onClick: () => pick("session") }, t("distillSession")),
-              h("div", { className: "mpd-item", style: itemStyle, onClick: () => pick("project") }, t("distillProject"))
+              h("div", { className: "mpd-item", style: itemStyle, onClick: pick }, t("distillProject"))
             ])
           : null,
         status ? h("div", { style: statusStyle }, status) : null,
@@ -216,8 +190,8 @@
               onClick: (e) => { if (e && e.target === e.currentTarget) setConfirming(null); }
             }, [
               h("div", { style: modalStyle }, [
-                h("p", { style: modalTitleStyle }, confirming === "session" ? t("confirmSessionTitle") : t("confirmProjectTitle")),
-                h("p", { style: modalTipsStyle }, confirming === "session" ? t("confirmSessionTips") : t("confirmProjectTips", { size: sizeText })),
+                h("p", { style: modalTitleStyle }, t("confirmProjectTitle")),
+                h("p", { style: modalTipsStyle }, t("confirmProjectTips", { size: sizeText })),
                 h("div", { style: modalActionsStyle }, [
                   h("button", { type: "button", style: btnCancelStyle, onClick: () => setConfirming(null) }, t("cancel")),
                   h("button", { type: "button", style: btnOkStyle, onClick: run }, t("confirm"))

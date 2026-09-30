@@ -170,17 +170,21 @@ const enKeys = Object.keys(localeDict.en).sort().join(",");
 if (zhKeys !== enKeys) throw new Error("FAIL: zh/en locale key sets differ");
 console.log("locale keys:", Object.keys(localeDict.zh).length, "| zh ≡ en");
 
-// ---- v1.8.0：以下配置项已整体移除，客户端不得再出现其字面量（模式选择器 / 总开关 / 错误记录 / 日志保留） ----
+// ---- v1.8.0 / v1.8.1：以下配置项已整体移除，客户端不得再出现其字面量 ----
 // ⚠️ 不走渲染断言：相关控件已删除，改为源码级负向断言，防止后续误把已删字段接回客户端
 // （会与已移除的 schema 字段脱节）。
+// v1.8.0：模式选择器（memoryMode）/ 写入总开关（summarize）/ 错误记录（autoCaptureErrors）/ 日志保留（dailyLogRetentionDays）
+// v1.8.1：会话蒸馏输出预算（summaryMaxTokens）/ 回喂存量记忆（feedbackEnabled）
 const REMOVED_KEY_PATTERNS = [
   [/memoryMode/, "memoryMode"],
   [/autoCaptureErrors/, "autoCaptureErrors"],
   [/dailyLogRetentionDays/, "dailyLogRetentionDays"],
   [/\bsummarize\b/, "summarize"],
+  [/summaryMaxTokens/, "summaryMaxTokens"],
+  [/feedbackEnabled/, "feedbackEnabled"],
 ];
 for (const [re, name] of REMOVED_KEY_PATTERNS) {
-  if (re.test(src)) throw new Error(`FAIL: client source must not reference removed config key "${name}" (v1.8.0)`);
+  if (re.test(src)) throw new Error(`FAIL: client source must not reference removed config key "${name}" (v1.8.0 / v1.8.1)`);
 }
 console.log("removed config keys absent from client (source-level):", REMOVED_KEY_PATTERNS.map(([, n]) => n).join(", "));
 
