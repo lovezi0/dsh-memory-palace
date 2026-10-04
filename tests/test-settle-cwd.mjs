@@ -27,7 +27,7 @@ function makeHarness(opts = {}) {
     on(ev, h) { if (!listeners.has(ev)) listeners.set(ev, []); listeners.get(ev).push(h); return () => {}; },
     inject(_deps, cb) { try { cb({ settings: { describe: () => [], replace: async () => {}, installSection: () => {} } }); } catch {} return () => {}; },
     effect() { return () => {}; },
-    // v1.8.0-alpha.4：日志落盘取径依赖 profileContext；未传 profileDir 时保持旧行为（logger 静默降级）。
+    // 日志落盘取径依赖 profileContext；未传 profileDir 时保持旧行为（logger 静默降级）。
     get(name) { return name === "profileContext" && profileDir ? { dir: profileDir } : undefined; },
     systemPrompt: { section() { return () => {}; } },
     tools: { register() { return () => {}; }, restrict() { return () => {}; } },

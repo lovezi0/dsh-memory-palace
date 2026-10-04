@@ -1,4 +1,4 @@
-// memory-palace v1.8.0-alpha.4 测试：诊断日志落盘（common/logger.mjs）。
+// memory-palace 测试：诊断日志落盘（common/logger.mjs）。
 // 覆盖：① 门控（distillDebugLog=false = 零输出，连目录都不建）；② 落点
 // （<profileContext.dir>/.memory-palace/logs/<session-id>/{info,debug}.log）+ 按行级别分流；
 // ③ raw 文本只进 debug.log（隐私红线：info.log 恒不含 LLM 原始响应）；
@@ -205,7 +205,7 @@ section("⑨ 真实链路：runMemorySubagent 双会话【并发】→ 日志各
   assert.equal(ra.mode, "noop", "A 应走完整循环收尾");
   assert.equal(rb.mode, "disabled", "B 应因 dirs 为空提前返回");
   assert.ok(aDbg && aDbg.includes("[debug] subagent · done"), "A 的 done 应落 sessA/debug.log");
-  // v1.8.0-alpha.4：子代理链路补齐 LLM 流统计（此前完全看不到 LLM 行为）
+  // 子代理链路补齐 LLM 流统计（此前完全看不到 LLM 行为）
   assert.ok(aDbg.includes("stream turn"), "应记录 LLM 流统计行 stream turn");
   assert.ok(/"chunks":\d+/.test(aDbg), "流统计应含 chunks");
   assert.ok(/"firstChunkMs":/.test(aDbg) && /"elapsedMs":\d+/.test(aDbg), "流统计应含 firstChunkMs / elapsedMs");
@@ -249,7 +249,7 @@ section("⑪ 真实链路：记忆子代理双会话【并发】→ 日志各归
   // 模型解析失败（summaryModel 为空 + session 无 requestHeader 模型信息）→ resolveModel 返回 null
   // → dbgFail("no model")。该 dbgFail 位于 resolveModel 内、用的是传入 session 的作用域日志器
   // ——正是要验的绑定点。
-  // v1.8.1：载体由 distillProjectMemory（已随手动蒸馏移除）换成真实链路的记忆子代理。
+  // 载体由 distillProjectMemory（已随手动蒸馏移除）换成真实链路的记忆子代理。
   const cfg = cfgOf({ distillDebugLog: true, summaryModel: "" });
   const mkDir = (tag) => {
     const ws = mkdtempSync(join(tmpdir(), `mp-sub-${tag}-`));

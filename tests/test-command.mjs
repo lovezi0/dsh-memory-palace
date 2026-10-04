@@ -1,4 +1,4 @@
-// memory-palace v1.8.1 会话命令 /memory_reorganize 测试。
+// memory-palace 会话命令 /memory_reorganize 测试。
 // 覆盖：① 门禁不过（未超预算）→ error 且不 steer；
 //       ② 门禁通过 → steer 内置提示（路径/预算/补充）+ 置位重整掩码（deny memory_read）+ 首步跳过项目级投影；
 //       ③ 停用 / 静默预设 / plan 模式 → error 且不产生消息；
@@ -105,7 +105,7 @@ section("② 门禁通过 → steer 内置提示 + deny memory_read + 首步跳�
   assert.ok(text.includes("memory_reorganize"), "应强制要求用 memory_reorganize 工具写入（唯一带备份路径）");
   assert.ok(/memory_read 本次已被禁用/.test(text), "应明示 memory_read 本次禁用");
   assert.ok(text.includes("补充说明"), "应附用户补充");
-  // v1.8.1-alpha.2：任务定义正名「两删一提一重构」+ 预算降为参考线 + 落盘一次 + 失败出口
+  // 任务定义正名「两删一提一重构」+ 预算降为参考线 + 落盘一次 + 失败出口
   assert.ok(
     /两删一提一重构/.test(text) && /删过时/.test(text) && /删重复/.test(text) && /冗余提炼/.test(text) && /重构文件结构/.test(text),
     "内置提示应含「两删一提一重构」任务定义",

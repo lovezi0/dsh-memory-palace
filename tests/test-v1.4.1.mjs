@@ -1,5 +1,5 @@
-// v1.4.1 单测：budgetClip（结构行 + 尾部最新条目）与 stripSmartTag（行首标签剥除）。
-// 运行：/usr/bin/env -u NODE_OPTIONS node test-v1.4.1.mjs
+// 单测：budgetClip（结构行 + 尾部最新条目）与 stripSmartTag（行首标签剥除）。
+// 运行：/usr/bin/env -u NODE_OPTIONS node test-.mjs
 import assert from "node:assert/strict";
 import { budgetClip, stripSmartTag } from "../src/common/text.mjs";
 
@@ -58,7 +58,7 @@ import { budgetClip, stripSmartTag } from "../src/common/text.mjs";
 assert.equal(budgetClip("", 100), "");
 assert.equal(budgetClip(null, 100), null);
 
-// 8.（v1.8.0-alpha.1 修复 D2）中部章节标题不随截断丢失——窗口外结构行按原序列于标记后
+// 8.中部章节标题不随截断丢失——窗口外结构行按原序列于标记后
 {
   const lines = ["# 标题", "", "## 章节一", "- 旧1", "## 章节二", "- 旧2", "## 章节三", "- 旧3", "## 章节四", "- 新"];
   const text = lines.join("\n");

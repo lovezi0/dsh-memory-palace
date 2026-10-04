@@ -120,6 +120,7 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.8.1**
+    - **1.8.1-alpha.3**
     - **1.8.1-alpha.2**
             - 💥移除「蒸馏项目记忆」手动功能
             - 💥移除 session header 记忆按钮

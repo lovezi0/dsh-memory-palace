@@ -33,7 +33,7 @@ function stubRequire(spec) {
     moduleCache.set(spec, react);
     return react;
   }
-  // v1.6.0-rc1：@deepseek-ai/dsh-client-runtime/client 已被移除引用，未知 spec 继续走 throw
+  // @deepseek-ai/dsh-client-runtime/client 已被移除引用，未知 spec 继续走 throw
   // （顺带验证 bundle 无死引用）。
   throw new Error("unexpected require: " + spec);
 }
@@ -53,7 +53,7 @@ const registrations = [];
 let localeDict = null;
 const ctx = {
   effect: (cb) => { if (typeof cb === "function") cb(); },
-  // v1.6.0-rc1：模型枚举走 remote.session.modelCatalog（effect 被 stub 成 no-op，实际不触达；
+  // 模型枚举走 remote.session.modelCatalog（effect 被 stub 成 no-op，实际不触达；
   // 放这儿防御性兜底）。
   remote: {
     session: {
@@ -102,14 +102,14 @@ console.log(
   registrations.map((r) => r.name).join(", ")
 );
 
-// v1.6.0-rc1：锁定新 inject 清单（connection 已被 remote + remote.session 取代）。
+// 锁定新 inject 清单（connection 已被 remote + remote.session 取代）。
 const injectFace = exports_.inject;
 if (!Array.isArray(injectFace) || !injectFace.includes("remote") || !injectFace.includes("remote.session") || injectFace.includes("connection")) {
   throw new Error("FAIL: unexpected inject face: " + JSON.stringify(injectFace));
 }
 const reg = registrations.find((r) => r.name === "settings.section");
 if (!reg) throw new Error("FAIL: settings.section not injected");
-// v1.8.1：会话标题栏「记忆」按钮已随「蒸馏项目记忆」移除——客户端不得再注入 header utilities 槽位。
+// 会话标题栏「记忆」按钮已随「蒸馏项目记忆」移除——客户端不得再注入 header utilities 槽位。
 if (registrations.some((r) => r.name === "conversation.session.header.utilities")) {
   throw new Error("FAIL: conversation.session.header.utilities must no longer be injected (v1.8.1 removed the memory button)");
 }
@@ -128,10 +128,10 @@ const injected = entry.options.inject ? entry.options.inject() : null;
 console.log("inject face keys =", injected ? Object.keys(injected) : "none");
 if (entry.options.id !== "memory-palace") throw new Error("FAIL: wrong section id");
 if (typeof entry.component !== "function") throw new Error("FAIL: missing component");
-// v1.1.3：设置读写改走自有 route（/memory-palace/api），inject face 不再提供 settingsScope set/unset。
+// 设置读写改走自有 route（/memory-palace/api），inject face 不再提供 settingsScope set/unset。
 if (injected === null) throw new Error("FAIL: inject face missing");
 
-// ---- v1.7.1 特性2/3：折叠卡片渲染 + locale 键完整性 ----
+// ---- 特性2/3：折叠卡片渲染 + locale 键完整性 ----
 // react 是 stub（createElement 返回 {stub:true,args}），故此处校验的是「组件可执行且渲染出预期结构」。
 const tree = entry.component({ t: (k) => "T:" + k, fetchModels: async () => [] });
 const walked = { headers: [], bodies: [] };
@@ -152,7 +152,7 @@ const walked = { headers: [], bodies: [] };
 
 console.log("collapse cards =", walked.headers.length, "| open bodies =", walked.bodies.length);
 if (walked.headers.length !== 5) throw new Error("FAIL: expected 5 collapsible cards, got " + walked.headers.length);
-// 默认必须全部收起（升级计划特性2：每个板块默认仅显示 title + description）
+// 默认必须全部收起（升级计划每个板块默认仅显示 title + description）
 if (walked.bodies.length !== 0) throw new Error("FAIL: cards must start collapsed");
 for (const h of walked.headers) {
   if (h["aria-expanded"] !== "false") throw new Error("FAIL: card not collapsed: " + h["aria-label"]);
@@ -174,11 +174,11 @@ const enKeys = Object.keys(localeDict.en).sort().join(",");
 if (zhKeys !== enKeys) throw new Error("FAIL: zh/en locale key sets differ");
 console.log("locale keys:", Object.keys(localeDict.zh).length, "| zh ≡ en");
 
-// ---- v1.8.0 / v1.8.1：以下配置项已整体移除，客户端不得再出现其字面量 ----
+// ---- / 以下配置项已整体移除，客户端不得再出现其字面量 ----
 // ⚠️ 不走渲染断言：相关控件已删除，改为源码级负向断言，防止后续误把已删字段接回客户端
 // （会与已移除的 schema 字段脱节）。
-// v1.8.0：模式选择器（memoryMode）/ 写入总开关（summarize）/ 错误记录（autoCaptureErrors）/ 日志保留（dailyLogRetentionDays）
-// v1.8.1：会话蒸馏输出预算（summaryMaxTokens）/ 回喂存量记忆（feedbackEnabled）/ 项目蒸馏输出预算（projectMaxTokens）
+// 模式选择器（memoryMode）/ 写入总开关（summarize）/ 错误记录（autoCaptureErrors）/ 日志保留（dailyLogRetentionDays）
+// 会话蒸馏输出预算（summaryMaxTokens）/ 回喂存量记忆（feedbackEnabled）/ 项目蒸馏输出预算（projectMaxTokens）
 const REMOVED_KEY_PATTERNS = [
   [/memoryMode/, "memoryMode"],
   [/autoCaptureErrors/, "autoCaptureErrors"],

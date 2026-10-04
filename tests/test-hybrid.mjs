@@ -1,4 +1,4 @@
-// memory-palace v1.6.0 hybrid 模式测试。
+// memory-palace hybrid 模式测试。
 // 覆盖：① sections 纯函数（解析/追加/新增/替换 stale 拒绝/标删/结构行保护/删除线过滤）；
 // ② 记忆子 agent 循环 mock LLM（无重点单轮 / tool-calls 多轮落盘 / 超 6 轮降级 / 不支持 tools 降级 / 20k 目录回喂）；
 // ③ memory_reorganize 双门禁（未超预算拒绝 / 冷却期拒绝 / 双满足通过 + 时间戳落盘 + 备份存在）。
@@ -51,7 +51,7 @@ section("① sections 纯函数");
   assert.equal(r3b.reason, "section-created");
   ok("createSectionText 拒绝已存在/新建");
 
-  // v1.6.0 双列表符修复：entry 自带 `- ` 前缀时必须剥除，不得产生 `- - xxx` 脏数据
+  // 双列表符修复：entry 自带 `- ` 前缀时必须剥除，不得产生 `- - xxx` 脏数据
   const r6 = appendToSectionText(md, "环境必知", "- 带前缀条目");
   assert.equal(r6.ok, true);
   assert.ok(r6.text.includes("\n- 带前缀条目"), "应剥除前缀后落盘");
@@ -178,7 +178,7 @@ section("② 记忆子 agent 循环（mock LLM）");
     assert.ok(content.includes("## 渠道排查"), "应写入章节");
     assert.ok(content.includes("- 渠道映射未生效根因"), "应写入条目");
     const secondMsg = calls[1];
-    // v1.8.0（dsh 0.1.7）：createToolResultMessage 从「user 消息装 tool-result 块」改为独立 role=tool 消息（content 为结果块本身）。
+    // （dsh 0.1.7）：createToolResultMessage 从「user 消息装 tool-result 块」改为独立 role=tool 消息（content 为结果块本身）。
     // 判据放宽为两版宿主通用：role=tool 或 user 消息内含 tool-result 块。
     assert.ok(secondMsg.some((m) => m.role === "tool" || (m.role === "user" && m.content?.some((b) => b.type === "tool-result"))), "第二轮应回喂 tool-result");
     ok("场景B：tool-calls 多轮 + 日志落盘 + tool-result 回喂");
@@ -270,7 +270,7 @@ section("② 记忆子 agent 循环（mock LLM）");
     rmSync(join(logDir, `${today}.md`), { force: true });
   }
 
-  // 场景 F（v1.6.3 用例A）：误调未知工具 run_code → 自纠改用 log_write_ops → stop
+  // 场景 F：误调未知工具 run_code → 自纠改用 log_write_ops → stop
   // 期望：appliedWrites>0、mode="written"、断点推进、日志实际落盘。
   {
     const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
@@ -316,10 +316,10 @@ section("② 记忆子 agent 循环（mock LLM）");
     rmSync(join(logDir, `${today}.md`), { force: true });
   }
 
-  // 场景 G（v1.6.3 用例B）：误调未知工具 run_code 后模型反复纯文本收尾（放弃），重试预算耗尽
+  // 场景 G：误调未知工具 run_code 后模型反复纯文本收尾（放弃），重试预算耗尽
   // 期望：mode="no-write"（ok:false）、断点不推进、dbgFail("no write applied") 被调、催促发生 ≤3 次。
   {
-    // v1.8.0-alpha.4 retarget：日志改为注入式 logger（不再走 console.error），改用收集型 sink 断言。
+    // retarget：日志改为注入式 logger（不再走 console.error），改用收集型 sink 断言。
     const sink = [];
     const logger = {
       for: () => ({
@@ -362,11 +362,11 @@ section("② 记忆子 agent 循环（mock LLM）");
       assert.equal(urges, 3, `催促应恰好 3 次（MAX_RETRY），实际 ${urges}`);
       ok("场景G：未知工具 + 反复放弃 → 催促 3 次后 no-write + 断点不推进");
     } finally {
-      // v1.8.0-alpha.4：日志改为注入式 logger，无需恢复 console.error。
+      // 日志改为注入式 logger，无需恢复 console.error。
     }
   }
 
-  // 场景 H（v1.6.3 用例C）：第 0 轮直接 stop（无工具调用）→ noop
+  // 场景 H：第 0 轮直接 stop（无工具调用）→ noop
   // 回归保护：防止三态判定改坏正常"无重点收尾"路径。
   {
     const ctx = {
@@ -443,7 +443,7 @@ section("③ memory_reorganize 双门禁");
 }
 
 // ---------- ③b memory_reorganize 预执行闸门（置位重整标记）+ description 引导 ----------
-// v1.8.1：重整流程期间禁用 memory_read（只覆盖近三天，读不到更早日志）——手动命令与 agent
+// 重整流程期间禁用 memory_read（只覆盖近三天，读不到更早日志）——手动命令与 agent
 // 自动调用工具两条路径都置位；工具 description 亦须改引导用文件读取工具。
 section("③b memory_reorganize 闸门置位 + description");
 {
@@ -498,7 +498,7 @@ section("③b memory_reorganize 闸门置位 + description");
   ok("memory_reorganize description：引导文件读取 + 明示 memory_read 禁用");
 }
 
-// ---------- ③c v1.8.1-alpha.2：写入形状层 + 守卫文案不再诱导绕道 + size 回显 ----------
+// ---------- ③c 写入形状层 + 守卫文案不再诱导绕道 + size 回显 ----------
 section("③c 写入规范（形状层）+ 守卫文案 + size 回显");
 {
   const tmp = mkdtempSync(join(tmpdir(), "mp-shape-"));
@@ -553,7 +553,7 @@ section("③c 写入规范（形状层）+ 守卫文案 + size 回显");
   assert.ok(/当前 \d+\/50 字符（[\d.]+×）/.test(r2.message), `user 回显应含「当前 N/50 字符（x×）」：${r2.message}`);
   ok("size 回显：按 scope 取预算（project 100 / user 50）");
 
-  // 兜底：cfg 缺 userBudgetChars 时须回落 schema 默认 8000（不是 v1.8.0 之前的旧值 4000）
+  // 兜底：cfg 缺 userBudgetChars 时须回落 schema 默认 8000（不是 之前的旧值 4000）
   const defs2 = [];
   const cfgNoUser = () => ({
     enabled: true, bridgeBuddyMemory: false, workspaceMemoryDir: ".deepseek-harness/memory",
@@ -580,7 +580,7 @@ section("③c 写入规范（形状层）+ 守卫文案 + size 回显");
   ok("基础写入工具（memory_note / _user）：形状层一致 + 无流水账措辞");
 }
 
-// ---------- 缺陷修复回归（v1.8.0-alpha.1：D1 entry 扁平化 / D3 标题一致性） ----------
+// ---------- 缺陷修复回归 ----------
 section("缺陷修复回归（v1.8.0-alpha.1）");
 {
   const md1 = "# 项目笔记\n\n## 环境必知\n- aaa\n";

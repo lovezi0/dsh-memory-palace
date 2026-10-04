@@ -1,5 +1,5 @@
-// v1.7.0 单测：四特性纯函数与钩子逻辑（不依赖真实 dsh 宿主）。
-// 运行：/usr/bin/env -u NODE_OPTIONS node test-v1.7.0.mjs
+// 单测：四特性纯函数与钩子逻辑（不依赖真实 dsh 宿主）。
+// 运行：/usr/bin/env -u NODE_OPTIONS node test-.mjs
 // 覆盖：
 //   特性1 E 投影（buildProjections 内容/预算/source 标注；registerProjection 折叠/去重/降级）
 //   特性2 路径读取优先级（readDirs dsh 优先叠加 buddy；writeDirs buddy 优先不变）

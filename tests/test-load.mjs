@@ -37,12 +37,12 @@ function assert(cond, label) {
 function makeMockLlm(opts = {}) {
   const text = opts.text !== undefined ? opts.text : '{"summary":"[SUMMARY]","durable":[]}';
   const fail = !!opts.fail;
-  // v1.4.0：可重试失败模拟——前 failTimes 次返回 finish.kind='error'（带 failStatus），之后成功；
+  // 可重试失败模拟——前 failTimes 次返回 finish.kind='error'（带 failStatus），之后成功；
   // failForever + failStatus = 每次都返回该状态错误（用于验证重试耗尽 / 500 单独限次）。
   const failStatus = opts.failStatus;
   const failTimes = opts.failTimes || 0;
   const failForever = !!opts.failForever;
-  // v1.2.3：注册表 mock——provider → model id 列表（供 resolveModel 反查裸 id 归属）。
+  // 注册表 mock——provider → model id 列表（供 resolveModel 反查裸 id 归属）。
   // 默认覆盖三个典型：带前缀 id（nvidia）、裸 id（xiaomi/zai）、双段自定义（openai）。
   const registry = opts.registry || {
     nvidia: ["nvidia/nemotron-3-ultra-550b-a55b", "z-ai/glm-5.2"],
@@ -79,7 +79,7 @@ function makeMockLlm(opts = {}) {
       }
       return gen();
     },
-    // v1.2.3：注册表枚举接口（resolveModel 反查依赖）。
+    // 注册表枚举接口（resolveModel 反查依赖）。
     listProviders() {
       return Object.keys(registry).map((id) => ({ id, name: id }));
     },
@@ -147,7 +147,7 @@ async function loadPlugin(overrides = {}, llmOpts) {
   const captured = { sections: [], tools: [], listeners: {} };
   ctx.provide("systemPrompt", { section: (s) => { captured.sections.push(s); return () => {}; } });
   ctx.provide("tools", { register: (t) => { captured.tools.push(t); } });
-  // v1.1.3：设置读写 route 依赖 webServer/webRuntime（mock no-op；route 只在真实请求时执行）。
+  // 设置读写 route 依赖 webServer/webRuntime（mock no-op；route 只在真实请求时执行）。
   ctx.provide("webServer", { register: () => {} });
   ctx.provide("webRuntime", { trustedHosts: [] });
   const mockLlm = makeMockLlm(llmOpts || {});
@@ -204,7 +204,7 @@ assert(inject.includes("llm"), "[1] inject includes 'llm' (memory sub-agent need
 const text = main.captured.sections[0].text();
 assert(typeof text === "string", "[2] section.text() returns string");
 
-// ---------- [1c] v1.8.0：memoryMode / autoCaptureErrors / summarize / dailyLogRetentionDays 均已移除 ----------
+// ---------- [1c] memoryMode / autoCaptureErrors / summarize / dailyLogRetentionDays 均已移除 ----------
 console.log("[1c] REMOVED CONFIG FIELDS");
 {
   const { default: Schema } = await import("@deepseek-ai/schemastery");
@@ -220,7 +220,7 @@ console.log("[1c] REMOVED CONFIG FIELDS");
   const [value] = Schema.resolve({ memoryMode: "plugin", autoCaptureErrors: true, summarize: false }, Config);
   assert(value.memoryMode === "plugin", "[1c] 废弃键原样透传（老 profile 不会被装载期拦下）");
   assert(value.summarize === false, "[1c] 废弃的总开关键同样原样透传");
-  // v1.8.1：手动蒸馏全线下线 —— 会话蒸馏与项目蒸馏的输出预算一并从 schema 摘除（记忆子代理字段保留）。
+  // 手动蒸馏全线下线 —— 会话蒸馏与项目蒸馏的输出预算一并从 schema 摘除（记忆子代理字段保留）。
   assert(!("summaryMaxTokens" in resolved), "[1c] summaryMaxTokens 已移除（会话蒸馏下线）");
   assert(!("feedbackEnabled" in resolved), "[1c] feedbackEnabled 已移除（回喂随会话蒸馏下线）");
   assert(!("projectMaxTokens" in resolved), "[1c] projectMaxTokens 已移除（项目蒸馏下线）");
@@ -250,7 +250,7 @@ console.log("[1c] REMOVED CONFIG FIELDS");
     "[1c] summarize:false 的旧配置不再阻断写入（总开关已废，装即写）");
 }
 
-// ---------- [1b] v1.7.1 特性3：自定义指令注入（section 内、位于记忆指令之后） ----------
+// ---------- [1b] 自定义指令注入（section 内、位于记忆指令之后） ----------
 console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
 {
   const blank = await loadPlugin({ customInstructions: "   \n  " });
@@ -266,12 +266,12 @@ console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
   const atIntro = tc.indexOf("记忆");
   const atCustom = tc.indexOf("回答一律用中文。");
   assert(atIntro !== -1 && atIntro < atCustom, "[1b] custom appended AFTER memory instructions");
-  // v1.7.1 特性1 回归保护：日志必须留在 E 投影，混进 section 会让 system 前缀每轮失效。
+  // 特性1 回归保护：日志必须留在 E 投影，混进 section 会让 system 前缀每轮失效。
   assert(!tc.includes("# 今日工作日志"), "[1b] daily log must NOT leak into section");
 }
 
 // ---------- 场景 G：buddy 桥接（写入目标解析） ----------
-// v1.8.0：原断言「buddy 每日日志已落盘」依赖已删除的轻量兜底路径；改为断言
+// 原断言「buddy 每日日志已落盘」依赖已删除的轻量兜底路径；改为断言
 // ① 写入目标解析到 buddy 目录 ② 子代理在该工作区被调用（写入路径活着）。
 console.log("[G] BUDDY BRIDGE");
 {
@@ -326,7 +326,7 @@ console.log("[I] memory_note_user");
   assert(count === 1, "[I] user-level dedup = 1");
 }
 
-// ---------- 场景 J：memory_read scope（v1.7.1：默认只读长期记忆，日志须显式请求） ----------
+// ---------- 场景 J：memory_read scope ----------
 console.log("[J] memory_read SCOPE");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-j-"));
@@ -346,12 +346,12 @@ console.log("[J] memory_read SCOPE");
   assert(!def.memory.includes("昨天定的约定"), "[J] default scope=memory excludes logs");
   assert(def.message.includes("scope=memory"), "[J] message echoes scope");
 
-  // scope='project'（v1.7.1 更名，原 node；与 memory_write 的写侧 scope 同名）：本 fixture 无工作区 MEMORY.md → 不返回内容
+  // scope='project'：本 fixture 无工作区 MEMORY.md → 不返回内容
   const projRes = await readTool.execute({ scope: "project" });
   assert(projRes.ok && projRes.message.includes("scope=project"), "[J] project scope accepted and echoed");
   assert(!projRes.memory.includes("昨天定的约定"), "[J] project excludes logs (no workspace MEMORY.md in fixture)");
 
-  // v1.7.1 标题修正：project 应读到 buddy 布局的 MEMORY.md，且标题为实际文件路径（而非日志目录）
+  // 标题修正：project 应读到 buddy 布局的 MEMORY.md，且标题为实际文件路径（而非日志目录）
   await fs.writeFile(join(memDir, "MEMORY.md"), "# 项目约定\n工作区级内容\n", "utf8");
   const projRes2 = await readTool.execute({ scope: "project" });
   assert(projRes2.memory.includes("工作区级内容"), "[J] project reads workspace MEMORY.md");
@@ -374,7 +374,7 @@ console.log("[J] memory_read SCOPE");
     const all = await readTool.execute({ scope: "all" });
     assert(all.ok && all.memory.includes("昨天定的约定"), "[J] all: log content included");
 
-    // v1.8.0-alpha.1 修复（D2）：日志 scope 剥删除线墓碑（不再冒充有效条目/占预算）；
+    // 修复：日志 scope 剥删除线墓碑（不再冒充有效条目/占预算）；
     // memory/project scope 保留墓碑 —— replace 模式的 stale 校验需要含墓碑的磁盘原文。
     const wsJ2 = mkdtempSync(join(tmpdir(), "mem-j2-"));
     const memDirJ2 = join(wsJ2, ".workbuddy", "memory");
@@ -487,7 +487,7 @@ console.log("[M] pre-execute approval gate (native popup)");
   await note.execute({ content: "use tabs for indentation" });
   await note.execute({ content: "use spaces for indentation" });
   const preListeners = captured.listeners["tools/pre-execute"] || [];
-  // v1.6.0：hybrid 无条件注册后 pre-execute 监听器为 2 个（legacy 删除闸门 + hybrid 写工具闸门）
+  // hybrid 无条件注册后 pre-execute 监听器为 2 个（legacy 删除闸门 + hybrid 写工具闸门）
   assert(preListeners.length === 2, "[M] two tools/pre-execute listeners registered (legacy + hybrid)");
   const gate = preListeners[0];
   const next = async () => ({ kind: "allow" });
@@ -512,7 +512,7 @@ console.log("[M] pre-execute approval gate (native popup)");
 }
 
 // ---------- 场景 V：冷启动（记忆全空）时写入分工指令仍注入 ----------
-// v1.8.0：原断言针对 plugin 模式的「记忆公民指令」，该分支已删；改为断言 HYBRID_PROACTIVE 与工具指引。
+// 原断言针对 plugin 模式的「记忆公民指令」，该分支已删；改为断言 HYBRID_PROACTIVE 与工具指引。
 console.log("[V] cold start → write-role instructions still injected");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-v-"));
@@ -527,7 +527,7 @@ console.log("[V] cold start → write-role instructions still injected");
     "[V] intro 含 memory_note / memory_read 工具指引");
 }
 
-// ---------- 场景 W：turn/end → 记忆子代理接线（v1.8.0 唯一写入路径）+ 口径保留 ----------
+// ---------- 场景 W：turn/end → 记忆子代理接线+ 口径保留 ----------
 console.log("[W] turn/end wires to the memory sub-agent + text-extraction口径 kept");
 {
   const ws = mkdtempSync(join(tmpdir(), "mem-w-"));
@@ -603,11 +603,11 @@ console.log("[P1-P6] PLAN MODE → writing blocked, reading still allowed");
   const s6 = fakeSession(ws6);
   fire(s6, cap6, "plan/mode", { active: true });
   const readTool = cap6.tools.find((t) => t.name === "memory_read");
-  const res6 = await readTool.execute({ scope: "daily" }); // 内容在日志里，须显式指定 scope（v1.7.1）
+  const res6 = await readTool.execute({ scope: "daily" }); // 内容在日志里，须显式指定 scope
   assert(res6.ok && res6.memory.includes("约定A"), "[P6] plan: memory_read still works");
 }
 
-// ---------- 场景 M：v1.7.2 预设级静默（官方 minimal「裸测环境」口径） ----------
+// ---------- 场景 M：预设级静默（官方 minimal「裸测环境」口径） ----------
 // 背景：宿主把「模式」做成 agent 平面 preset，而本插件注册在 host 平面 —— 各通道对每个 agent 都生效，
 // preset 不会把它摘掉（complete 只吞 sections、不裁 tools）。故必须按会话预设自行整体静默。
 // 判据：session.header.agentPreset（创建头，含部署默认）+ agent-preset/selected 事件。
