@@ -20,8 +20,10 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # 用 npm install 而非 npm ci：lock 在 Windows 下生成，只含本平台 optional 二进制包
+      # （node-addon-require-builtin 等），npm 11 的 npm ci 会严格校验并要求所有平台条目而报错。
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Verify tag matches package version
         run: |
