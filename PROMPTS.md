@@ -3,9 +3,8 @@
 > **说明文档，非真源。** 本插件所有提示词的真源在 `src/`：
 > - 系统提示词注入：`src/index.mjs`（`text()` 闭包）
 > - 记忆投影（非提示词，但决定模型可见内容）：`src/projection.mjs`
-> - 项目蒸馏：`src/common/prompts.mjs`
+> - 会话命令 `/memory_reorganize` 内置提示：`src/common/prompts.mjs`
 > - 记忆分工 / 子代理提示词：`src/hybrid/prompts.mjs`（`HYBRID_PROACTIVE` / `SUBAGENT_SYSTEM`）
-> - 失败重试：`src/common/retry.mjs`
 >
 > 改提示词请改源码，**本文件仅作人工可读索引与维护参照**，需与源码同步更新。
 > 适用版本：见 package.json。
@@ -20,12 +19,13 @@
 | **记忆正文投影** | **用户级/项目级 MEMORY.md + 今日日志** | **`src/projection.mjs`** | **每 step 经 `agent/pre-step` 注入为常驻 user 消息（不在 section 内）** |
 | 路径简写硬约束 | `antiMangle` | `src/index.mjs` | 随 system prompt 注入（始终） |
 | plan 模式禁写提示 | `planNote` | `src/index.mjs` | 仅 plan 模式激活时追加 |
-| 项目记忆蒸馏 | `DISTILL_PROMPT` | `src/common/prompts.mjs` | 手动「蒸馏项目记忆」按钮 |
+| 会话命令 `/memory_reorganize` 内置提示 | `REORG_COMMAND_PROMPT` | `src/common/prompts.mjs` | 用户手打 `/memory_reorganize`；handler 经 `agent.steer` 作为用户消息发送 |
 | **记忆分工说明（段二）** | **`HYBRID_PROACTIVE`** | **`src/hybrid/prompts.mjs`** | **每轮 system prompt 段二（随 `text()` 注入）** |
 | **记忆子代理 system prompt** | **`SUBAGENT_SYSTEM()`** | **`src/hybrid/prompts.mjs`** | **每轮 turn/end 触发 `runMemorySubagent`** |
 
 > v1.8.0：`SCENE_KEYWORDS`（防闲聊闸门关键词）与 `smart` 模式的自动摘要入口 `summarizeTurn` 已随模式一并删除。
-> v1.8.1：`SUMMARY_PROMPT` 已随「蒸馏会话」功能整体移除；手动链路只剩项目记忆蒸馏。
+> v1.8.1：`SUMMARY_PROMPT`（会话蒸馏）与 `DISTILL_PROMPT`（项目蒸馏）均已随对应功能整体移除，
+> 项目记忆重整改由 `REORG_COMMAND_PROMPT`（会话命令）驱动。
 
 ---
 
@@ -49,7 +49,7 @@
 ### 2.3 记忆分工指令 `proactive`（v1.8.0 起恒为 `HYBRID_PROACTIVE`）
 | 分支 | 注入文案 | 意图 |
 |---|---|---|
-| **（唯一）** | 「记忆分工说明」`HYBRID_PROACTIVE`：①日志由子代理每轮自动维护（含去重标删），agent 无需记录过程；②MEMORY.md 由 agent 主动调 `memory_write` 维护（章节化）；③项目级仅双门禁满足时可 `memory_reorganize` 全量重整，否则只能 `memory_update_section` 章节级修正；④用户级禁止重整 | 日志/长期记忆职责分离，agent 主写 MEMORY.md |
+| **（唯一）** | 「记忆分工说明」`HYBRID_PROACTIVE`：①日志由子代理每轮自动维护（含去重标删），agent 无需记录过程；②MEMORY.md **只在「下个会话不做就会做错」时才写**，写前自检（是否在解释代码怎么实现？去掉行号/报错全文/临时链接后还立得住吗？）、先查重、**优先 `memory_update_section` 合并，其次 `memory_write` 追加**；③项目级仅双门禁满足时可 `memory_reorganize` 全量重整（**只允许落盘一次**），否则不得反复尝试；④用户级禁止重整 | 日志/长期记忆职责分离，agent 主写 MEMORY.md，且**只记 durable 结论、不记过程流水** |
 
 > v1.8.0：原 `plugin`（记忆公民指令）与 `smart`（记忆自动维护说明）两个分支已删除，`proactive` 直接取 `HYBRID_PROACTIVE`。
 > **注意**：`HYBRID_PROACTIVE` 只讲分工、不含工具清单——工具指引（`memory_note` / `memory_read`）在 §2.1 的 intro 里，不可误删。
@@ -89,8 +89,8 @@
 
 注入 system prompt 的「段二」（v1.8.0 起唯一形态；原 smart 的「无需主动调用」与 plugin 的「记忆公民指令」已删除）。四点分工：
 1. 日志由子代理每轮自动维护（含去重：重复/过时条目删除线标记），agent 无需重复记录过程性信息；
-2. MEMORY.md（项目/用户）由 agent 主动调 `memory_write` 追加（章节化），过时内容用 `memory_update_section` 整章节替换或标删；
-3. 项目级 MEMORY.md 仅「超出注入预算 且 距上次重整 ≥ 冷却期」双条件同时满足才可 `memory_reorganize` 全量重整，重整前先读日志对照、勿丢关键信息；
+2. MEMORY.md（项目/用户）由 agent 主动维护，但**只在「下个会话不做这条就会做错 / 返工 / 重踩坑」时才写**（记关键决策、踩坑修复、用户偏好等 durable 结论，不记过程流水）。写前自检：这条是不是在解释「代码怎么实现」？去掉行号 / 报错全文 / 临时链接后还立得住吗？写前先查重（同一事实只留一处），**优先用 `memory_update_section` 合并 / 改写已有条目，其次才 `memory_write` 追加**；一次只记一个事实；
+3. 项目级 MEMORY.md 仅「超出注入预算 且 距上次重整 ≥ 冷却期」双条件同时满足才可 `memory_reorganize` 全量重整；重整**只允许落盘一次**，重整前先读文件与日志对照、勿丢关键信息；门禁不满足时**不要反复尝试**（未超预算 → `memory_update_section` 日常维护；冷却期内 → 停止并如实报告）；
 4. 用户级 MEMORY.md 禁止全量重整。
 
 ### 4.2 记忆子代理 system prompt `SUBAGENT_SYSTEM()`
@@ -119,39 +119,41 @@ hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.m
 
 子代理**不写文件头**（prompt 明文），由 `ensureLogHeader`（`src/common/sections.mjs`）在 `applyLogOps` 落盘前补齐 `# YYYY-MM-DD`：空文件写入标题；首行空或直接以 `##` 开头则补标题；已有同日标题原样返回（幂等）。仅在写入时补齐，历史文件不回填。
 
+### 4.5 写入工具 description：形状层规范（v1.8.1）
+
+真源：`src/tools.mjs`（`memory_note` / `memory_note_user`）与 `src/hybrid/tools.mjs`（`memory_write` / `memory_update_section` / `memory_reorganize`）。**全部写入路径共用同一套形状规范**（防「换个工具写就绕过规范」的后门）：
+
+- **一条一事**、结论先行、客观第三人称；条目简明，需展开就拆 `- 父项` + 两空格缩进子项（**仅章节化工具**适用——`memory_note` / `memory_note_user` 的参数是单行，无父子结构）。
+- **禁源码坐标**（`file.go:123`）——行号随版本失效，属一次性排查过程。
+- **禁一次性过程**（报错全文 / 命令输出 / 临时 URL）。
+- **路径**只写可复用入口（目录、配置文件名、命令）；**URL** 只留下次必须照填的基址形态。
+- 分层：**决策层**（要不要写 / 优先合并 / 写前查重）在 `HYBRID_PROACTIVE`（§4.1），**形状层**在 description —— 两层不重复同一套规则。
+
+> v1.8.1 同时**移除**两类有害措辞：① 旧 description 的 "then key details: commands/paths/numbers"（**鼓励塞实现细节**）；② 门禁失败时的 "use memory_update_section instead" 与「请用 memory_update_section 做章节级修正」（**把 agent 推向绕道路径**——实测中 agent 正是照此做了 13 次章节级暴力删改）。拦截消息只表达「停止 + 上报」，不给替代路径。
+
 ---
 
-## 五、项目记忆蒸馏 Prompt `DISTILL_PROMPT`
+## 五、会话命令 `/memory_reorganize` 内置提示 `REORG_COMMAND_PROMPT`
 
 真源：`src/common/prompts.mjs`。
 
 ### 5.1 用途与触发
-手动「蒸馏项目记忆」按钮调用：system = 本 prompt（函数式，注入 `outputBudget`），user = 项目 `MEMORY.md` 全文，输出 = 精炼后的项目记忆，**直接覆盖写回**（先写 `memory-cover.md` 校验完整，再备份 + rename 原子替换；失败则原记忆不动）。
+用户手打会话命令 `/memory_reorganize` 时，`src/index.mjs` 的 handler 先过门禁（`enabled` → 会话静默 → plan 模式 → 有活动工作区 → `checkReorgGate`：超注入预算 **且** 过冷却），通过后把本提示作为一条 `source.kind='user'` 的**用户消息** `agent.steer` 给模型（宿主命令注册表自身不提交消息，必须 handler 亲自提交）。提示首行固定为 `REORG_MESSAGE_PREFIX`（`【项目记忆重整任务】`），用于把命令注入的消息与用户后续真实消息区分开（后者出现即摘除重整期掩码）。
 
-`DISTILL_PROMPT({ outputBudget } = {})`。`outputBudget` 取自 `projectMaxTokens`（默认 8000），注入【输出长度约束】：提炼后的项目记忆控制在约 `outputBudget` token（≈`outputBudget*1.8` 字）内；思考不受限，成稿须精炼不超预算。该值仅 prompt 软约束，**不**传给 API（API 层不传 maxTokens，靠模型原生帽兜底）。
+### 5.2 内容要点
+- **读取**：给出项目 `MEMORY.md` 绝对路径 + 工作日志目录绝对路径，要求列出 `memory/*.md`（含历史日期）自行读取；**明示 `memory_read` 本次已禁用**（其 scope 只到近三天，读不到更早日志）；不硬绑具体工具名（不同 profile 的 agent 工具集不同，必要时经代码执行读文件）。
+- **任务定义（v1.8.1）**：基于现有 MEMORY.md 与**对应工作日期的日志**做「**两删一提一重构**」——删过时条目 / 删重复信息 / 冗余提炼（**不丢精度**）/ 重构文件结构。
+- **约束**：保持 `## 章节` + `- 条目` 格式；绝不丢失仍有效的关键信息（硬约束、禁止项、前提、决策及理由、可复用入口、已验证的坑）；**预算 `workspaceBudgetChars` 是「健康参考线」而非硬指标**——严禁为达标删除仍有效信息；**只依据**现有 MEMORY.md + 工作日志，**不得新增**原记忆没有的章节/结论，不得把已过时结论重新引入；条目形状同写入工具规范（一条一事、禁源码坐标、禁一次性过程）；只动项目级、禁改用户级。
+- **落盘纪律（v1.8.1）**：**只允许落盘一次**（草稿不会自动保存 → 想清楚再写定，不要反复推倒重来；一轮到位 = 质量最优）；**必须调用 `memory_reorganize` 工具写入**（唯一会整档备份原文件的路径，机器自动追加时间戳）；被门禁/确认拦截时**停止**并向用户如实报告最终结果——**绝不**改用其它工具继续删改凑数。
 
-### 5.2 提炼总原则
-只留「以后还会用到」，删「一次性过程」；判断标准：删了这条下次开会会不会出错/返工/重踩坑？会→留，不会→删。
-
-### 5.3 常见归档维度（参考，非强制；可按材料实际内容增删维度）
-1. 定位 —— 任务本质 + 最终产出
-2. 当前状态 —— 推进到哪、卡哪、下一步
-3. 核心约束 —— 绝对不能变（丢了会出事才叫约束）
-4. AI 行为边界 —— 谁能做/绝不做/留给用户；若设置该章节，「谁授权/谁拍板」约定集中于此
-5. 关键路径 —— 绝对路径/命令/数据源/模板/依赖（原样精确保留，禁占位符）
-6. 决策记录 —— 为什么这么做，带日期/版本锚点；废弃方案标「已废弃」不删
-7. 坑与教训 —— 现象→根因→解法，一条一坑
-
-### 5.4 写法规则与输出骨架
-- 结论先行、强动词（必须/绝不/勿/除非…明确同意）、精确值（路径版本原样）、时间锚点。
-- 骨架章节（**参考**，可按内容增删/合并/改名，以契合为先，无关章节不硬凑）：`# <项目名> 项目笔记` + 核心约束 + AI 行为边界 + 关键路径 + 决策记录 + 坑与教训。
-- 输出前自检 6 条（一次性过程/约束删否/边界无歧义/路径精确/坑三要素/**条目归在最契合章节、不为凑骨架错位归类**）。
+### 5.3 参数
+`REORG_COMMAND_PROMPT({ budget, memFile, logDirs } = {})`——`budget` 取 `workspaceBudgetChars`；`memFile` / `logDirs` 由 `paths.memoryFileOf` 与 `paths.readDirs` 解析后注入正文；用户输入的补充说明追加在末尾（`【用户补充】…`）。
 
 ---
 
 ## 六、文档维护说明
 
-- 本文件只收录**提示词与提示词常量**（系统提示词注入 / 闸门关键词 / 摘要 prompt / 蒸馏 prompt），另收录「记忆正文投影」与「日志文件头规范」——它们不是提示词，但直接决定模型可见内容，故在此登记。
-- **蒸馏失败重试**属蒸馏行为机制，非提示词，说明在 `DEVELOPMENT.md`「蒸馏 —— 失败重试」（真源 `src/common/retry.mjs`）。
+- 本文件只收录**提示词与提示词常量**（系统提示词注入 / 会话命令内置提示 / 子代理 prompt），另收录「记忆正文投影」与「日志文件头规范」——它们不是提示词，但直接决定模型可见内容，故在此登记。
+- **重整流程（门禁 / 禁用 `memory_read` / 首步跳过投影）**属行为机制，非提示词，说明在 `DEVELOPMENT.md`「会话命令 /memory_reorganize」与「记忆子代理要点」。
 - **投影通道的契约风险与降级**见 `DEVELOPMENT.md`「记忆注入通道」§7.4。
 - 改提示词请改源码（`src/index.mjs` 系统提示词闭包 / `src/common/prompts.mjs` / `src/hybrid/prompts.mjs`），本文件同步更新。

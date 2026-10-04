@@ -4,14 +4,16 @@
 // ③ memory_reorganize 双门禁（未超预算拒绝 / 冷却期拒绝 / 双满足通过 + 时间戳落盘 + 备份存在）。
 // 运行：npm run build 后 `/usr/bin/env -u NODE_OPTIONS node test-hybrid.mjs`（import 自 lib/）。
 import { strict as assert } from "node:assert";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { parseSections, locateSection, appendToSectionText, upsertSectionText, createSectionText, replaceSectionText, markEntryDeletedText } from "../lib/common/sections.mjs";
 import { stripDeletedLines } from "../lib/common/text.mjs";
+import { createPaths } from "../lib/common/paths.mjs";
 import { runMemorySubagent } from "../lib/hybrid/subagent.mjs";
-import { checkReorgGate, readLastReorg } from "../lib/hybrid/tools.mjs";
+import { checkReorgGate, readLastReorg, registerHybridTools, attachHybridGuards } from "../lib/hybrid/tools.mjs";
+import { registerTools } from "../lib/tools.mjs";
 
 let passed = 0;
 function ok(name) { passed++; console.log(`  ✓ ${name}`); }
@@ -438,6 +440,144 @@ section("③ memory_reorganize 双门禁");
   const g3 = checkReorgGate(memFile, cfg);
   assert.equal(g3.ok, true, "双满足应通过");
   ok("门禁：双满足通过");
+}
+
+// ---------- ③b memory_reorganize 预执行闸门（置位重整标记）+ description 引导 ----------
+// v1.8.1：重整流程期间禁用 memory_read（只覆盖近三天，读不到更早日志）——手动命令与 agent
+// 自动调用工具两条路径都置位；工具 description 亦须改引导用文件读取工具。
+section("③b memory_reorganize 闸门置位 + description");
+{
+  const tmp = mkdtempSync(join(tmpdir(), "mp-reorg-guard-"));
+  mkdirSync(join(tmp, ".deepseek-harness"), { recursive: true });
+  const memFile = join(tmp, ".deepseek-harness", "MEMORY.md");
+  writeFileSync(memFile, `## 大章节\n${Array.from({ length: 300 }, (_, i) => `- 条目${i} ${"y".repeat(40)}`).join("\n")}\n`, "utf8");
+  const cfg = () => ({
+    enabled: true, bridgeBuddyMemory: false, workspaceMemoryDir: ".deepseek-harness/memory",
+    workspaceBudgetChars: 3000, reorgCooldownDays: 7,
+  });
+  const paths = createPaths(cfg, () => tmp);
+  const marks = [];
+  const state = {
+    reorgBySession: new Map(),
+    reorgSkipFirstStep: new Map(),
+    markReorg: (session, opts) => marks.push({ id: session?.id, opts }),
+  };
+  const listeners = {};
+  const ctx = { on: (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); } };
+  attachHybridGuards(ctx, cfg, paths, state);
+  const guard = (listeners["tools/pre-execute"] || [])[0];
+  assert.ok(typeof guard === "function", "应注册 tools/pre-execute 闸门");
+
+  const session = { id: "s-reorg", header: { cwd: tmp } };
+  const askRes = await guard(
+    { name: "memory_reorganize", agent: { session }, arguments: { newContent: "## x\n- y" } },
+    async () => ({ kind: "allow" }),
+  );
+  assert.equal(askRes.kind, "ask", "门禁通过 → 走原生确认弹窗（ask）");
+  assert.equal(marks.length, 1, "门禁通过应置位重整标记");
+  assert.equal(marks[0].id, "s-reorg", "重整标记应绑定发起会话");
+  ok("memory_reorganize 闸门：通过 → ask + 置位重整标记");
+
+  writeFileSync(memFile, "## 小\n- a\n", "utf8");
+  const denyRes = await guard(
+    { name: "memory_reorganize", agent: { session: { id: "s-small", header: { cwd: tmp } } }, arguments: { newContent: "## x\n- y" } },
+    async () => ({ kind: "allow" }),
+  );
+  assert.equal(denyRes.kind, "deny", "未超预算 → deny");
+  assert.equal(marks.length, 1, "被门禁拒绝时不得置位重整标记");
+  ok("memory_reorganize 闸门：门禁不过 → deny 且不置位");
+
+  // description：引导用文件读取工具，且明示 memory_read 在重整期间被禁用（不再引导 memory_read）
+  const toolDefs = [];
+  registerHybridTools({ ctx: { tools: { register: (d) => toolDefs.push(d) } }, getConfig: cfg, paths, state });
+  const reorgDef = toolDefs.find((d) => d.name === "memory_reorganize");
+  assert.ok(reorgDef, "memory_reorganize 工具应已注册");
+  assert.ok(/file-reading tools/.test(reorgDef.description), "description 应引导用文件读取工具");
+  assert.ok(/memory_read tool is DISABLED/.test(reorgDef.description), "description 应明示 memory_read 在重整期间被禁用");
+  assert.ok(!/memory_read with scope/.test(reorgDef.description), "description 不得再引导 memory_read 读取");
+  ok("memory_reorganize description：引导文件读取 + 明示 memory_read 禁用");
+}
+
+// ---------- ③c v1.8.1-alpha.2：写入形状层 + 守卫文案不再诱导绕道 + size 回显 ----------
+section("③c 写入规范（形状层）+ 守卫文案 + size 回显");
+{
+  const tmp = mkdtempSync(join(tmpdir(), "mp-shape-"));
+  mkdirSync(join(tmp, ".deepseek-harness"), { recursive: true });
+  writeFileSync(join(tmp, ".deepseek-harness", "MEMORY.md"), "# 项目笔记\n\n## 环境必知\n- 旧条目\n", "utf8");
+  const cfg = () => ({
+    enabled: true, bridgeBuddyMemory: false, workspaceMemoryDir: ".deepseek-harness/memory",
+    workspaceBudgetChars: 100, userBudgetChars: 50, userMemoryPath: join(tmp, "USER-MEMORY.md"),
+    reorgCooldownDays: 7, summaryTimeoutMs: 60000,
+  });
+  const paths = createPaths(cfg, () => tmp);
+  const toolDefs = [];
+  registerHybridTools({ ctx: { tools: { register: (d) => toolDefs.push(d) } }, getConfig: cfg, paths, state: {} });
+  const byName = (n) => toolDefs.find((d) => d.name === n);
+  const wDef = byName("memory_write"), uDef = byName("memory_update_section"), rDef = byName("memory_reorganize");
+
+  // 形状层：三个写入工具 description 同一套（一条一事 / 禁源码坐标 / 禁一次性过程）
+  for (const [n, d] of [["memory_write", wDef], ["memory_update_section", uDef], ["memory_reorganize", rDef]]) {
+    assert.ok(/one fact per entry/i.test(d.description), `${n} description 应含「一条一事」`);
+    assert.ok(/source coordinate/i.test(d.description), `${n} description 应禁源码坐标`);
+    assert.ok(/one-off material/.test(d.description), `${n} description 应禁一次性过程`);
+  }
+  // memory_write：去掉诱导塞细节的 "then key details"
+  assert.ok(!/then key details/.test(wDef.description), "memory_write 不得再写 'then key details'（诱导塞细节）");
+  // memory_reorganize：门禁失败不再引导绕道；含一次落盘 / 参考线 / 两删一提一重构
+  assert.ok(!/use memory_update_section instead/.test(rDef.description), "门禁失败不得再引导改用 memory_update_section");
+  assert.ok(/REFERENCE LINE, not a hard target/.test(rDef.description), "应声明预算为参考线而非硬指标");
+  assert.ok(/ONLY ONE write is allowed/.test(rDef.description), "应声明只允许落盘一次");
+  assert.ok(/drop obsolete/.test(rDef.description) && /restructure/.test(rDef.description), "应写明两删一提一重构任务");
+  ok("三个写入工具 description：形状层统一 + 去掉诱导措辞 + 一次落盘");
+
+  // 守卫文案：冷却拒绝不再把 agent 推向绕道路径
+  const p2 = (n) => String(n).padStart(2, "0");
+  const now = new Date();
+  const nowIso = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}T${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
+  const guardFile = join(tmp, "guard-target.md");
+  writeFileSync(guardFile, `## 大章节\n${"- x xx\n".repeat(80)}\n<!-- memory-palace:last-reorg:${nowIso} -->\n`, "utf8");
+  const gate = checkReorgGate(guardFile, { workspaceBudgetChars: 10, reorgCooldownDays: 7 });
+  assert.equal(gate.overBudget, true, "守卫样本应超预算");
+  assert.equal(gate.cooled, false, "守卫样本应在冷却期内");
+  assert.ok(/仅允许落盘一次/.test(gate.reason), `冷拒绝应明示「只允许落盘一次」：${gate.reason}`);
+  assert.ok(!/章节级修正/.test(gate.reason), "冷拒绝不得再引导 memory_update_section 做章节级修正");
+  ok("守卫文案：冷却拒绝只表达「停止 + 报告」，不给出替代路径");
+
+  // size 回显：按 scope 取预算（project → workspaceBudgetChars / user → userBudgetChars）
+  const exec = { agent: { session: { id: "s-size", header: { cwd: tmp } } } };
+  const r1 = await wDef.execute({ scope: "project", section: "环境必知", entry: "新增条目甲" }, exec);
+  assert.ok(r1.ok, "memory_write(project) 应写入成功");
+  assert.ok(/当前 \d+\/100 字符（[\d.]+×）/.test(r1.message), `project 回显应含「当前 N/100 字符（x×）」：${r1.message}`);
+  const r2 = await wDef.execute({ scope: "user", section: "偏好", entry: "偏好甲" }, exec);
+  assert.ok(r2.ok, "memory_write(user) 应写入成功");
+  assert.ok(/当前 \d+\/50 字符（[\d.]+×）/.test(r2.message), `user 回显应含「当前 N/50 字符（x×）」：${r2.message}`);
+  ok("size 回显：按 scope 取预算（project 100 / user 50）");
+
+  // 兜底：cfg 缺 userBudgetChars 时须回落 schema 默认 8000（不是 v1.8.0 之前的旧值 4000）
+  const defs2 = [];
+  const cfgNoUser = () => ({
+    enabled: true, bridgeBuddyMemory: false, workspaceMemoryDir: ".deepseek-harness/memory",
+    workspaceBudgetChars: 6000, userMemoryPath: join(tmp, "USER2.md"),
+  });
+  registerHybridTools({ ctx: { tools: { register: (d) => defs2.push(d) } }, getConfig: cfgNoUser, paths, state: {} });
+  const r3 = await defs2.find((d) => d.name === "memory_write").execute({ scope: "user", section: "偏好", entry: "乙" }, exec);
+  assert.ok(/\/8000 字符/.test(r3.message), `缺 userBudgetChars 时应回落 8000：${r3.message}`);
+  ok("size 回显兜底：userBudgetChars 缺失 → 8000（与 schema 默认一致）");
+
+  // 基础写入工具（memory_note / memory_note_user）也须同一套形状规范 + 去掉推流水账措辞
+  const baseDefs = [];
+  registerTools({ ctx: { tools: { register: (d) => baseDefs.push(d) }, on: () => {} }, getConfig: cfg, paths, state: {} });
+  for (const n of ["memory_note", "memory_note_user"]) {
+    const d = baseDefs.find((x) => x.name === n);
+    assert.ok(d, `${n} 应已注册`);
+    assert.ok(/conclusion first/i.test(d.description), `${n} 应含「结论先行」`);
+    assert.ok(/source coordinate/i.test(d.description), `${n} 应禁源码坐标`);
+    assert.ok(/one-off material/.test(d.description), `${n} 应禁一次性过程`);
+    assert.ok(/must-reuse base addresses/.test(d.description), `${n} 应含「URL 只留基址」`);
+    assert.ok(!/after completing tasks/i.test(d.description), `${n} 不得再推「完成任务后就写」式流水账`);
+    assert.ok(!/then key details/.test(d.description), `${n} 不得再写 'then key details'`);
+  }
+  ok("基础写入工具（memory_note / _user）：形状层一致 + 无流水账措辞");
 }
 
 // ---------- 缺陷修复回归（v1.8.0-alpha.1：D1 entry 扁平化 / D3 标题一致性） ----------

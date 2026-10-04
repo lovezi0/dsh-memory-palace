@@ -1,4 +1,4 @@
-    const FIELD_NUMERIC = new Set(["userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "projectMaxTokens", "reorgCooldownDays", "subagentLogBudget"]);
+    const FIELD_NUMERIC = new Set(["userBudgetChars", "workspaceBudgetChars", "summaryTimeoutMs", "reorgCooldownDays", "subagentLogBudget"]);
     const FIELD_BOOL = new Set(["bridgeBuddyMemory", "distillDebugLog"]);
 
     function projectDraft(snap) {
@@ -6,7 +6,7 @@
       return {
         bridgeBuddyMemory: v.bridgeBuddyMemory === false ? "false" : "true",
         buddyWorkspaceMemoryDirs: Array.isArray(v.buddyWorkspaceMemoryDirs) ? v.buddyWorkspaceMemoryDirs.join(", ") : ".workbuddy/memory, .codebuddy/memory",
-        // v1.7.2：静默预设名单（数组 ↔ 逗号串，与 buddyWorkspaceMemoryDirs 同款约定）
+        // 静默预设名单（数组 ↔ 逗号串，与 buddyWorkspaceMemoryDirs 同款约定）
         silentPresets: Array.isArray(v.silentPresets) ? v.silentPresets.join(", ") : "minimal",
         userMemoryPath: v.userMemoryPath || "~/.deepseek-harness/MEMORY.md",
         workspaceMemoryDir: v.workspaceMemoryDir || ".deepseek-harness/memory",
@@ -15,7 +15,6 @@
         distillDebugLog: v.distillDebugLog === false ? "false" : "true",
         summaryTimeoutMs: v.summaryTimeoutMs != null ? String(Math.round((Number(v.summaryTimeoutMs) || 0) / 1000)) : "60",
         summaryModel: v.summaryModel || "",
-        projectMaxTokens: v.projectMaxTokens != null ? String(v.projectMaxTokens) : "8000",
         reorgCooldownDays: v.reorgCooldownDays != null ? String(v.reorgCooldownDays) : "7",
         subagentLogBudget: v.subagentLogBudget != null ? String(v.subagentLogBudget) : "20000",
         customInstructions: v.customInstructions || ""
@@ -29,7 +28,7 @@
       return {};
     };
 
-    // v1.1.3：设置读写改走插件自有 route（/memory-palace/api）——dsh web 端 settingsScope 在
+    // 设置读写改走插件自有 route（/memory-palace/api）——dsh web 端 settingsScope 在
     // 非 loopback 连接下 persistence='memory'（set() no-op），apiproxy 又只暴露 allowlist namespace，
     // 设置页保存永远不落盘。同源 fetch 自己的 route 由服务端直写 settings-file，真正保存。
     async function apiGetFull() {

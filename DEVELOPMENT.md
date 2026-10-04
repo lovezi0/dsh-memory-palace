@@ -7,38 +7,36 @@ dsh-memory-palace/
 ├── src/
 │   ├── index.mjs              # 插件后端入口（cordis 插件：name/Config/inject/apply，薄装配层：闭包运行时 + 工厂装配）
 │   ├── common/                # 纯函数与常量（零状态，可独立单测）
-│   │   ├── prompts.mjs        #   DISTILL_PROMPT（v1.8.0 起无 SCENE_KEYWORDS；v1.8.1 起无 SUMMARY_PROMPT）
+│   │   ├── prompts.mjs        #   REORG_COMMAND_PROMPT（会话命令 /memory_reorganize 的内置提示 + 消息前缀）
 │   │   ├── text.mjs           #   todayISO / nowStamp / budgetClip / blockText / extractText / stripDeletedLines 等
 │   │   ├── paths.mjs          #   createPaths 工厂（buddyDirs / writeDirs / memoryFileOf，cwd 参数化）
 │   │   ├── records.mjs        #   appendLineDedup / findMatches / removeLineByMatch / recentLogDates（纯函数）
 │   │   ├── sections.mjs       #   章节纯函数：parse/locate/append/upsert/create/replace/markEntryDeleted（hybrid 用）
-│   │   ├── retry.mjs          #   蒸馏 LLM 失败重试：classifyFailure / backoffDelayMs / runWithRetry（纯函数，可单测）
 │   │   └── logger.mjs         #   统一日志落盘：createLogger（profile 目录 .memory-palace/logs/<sid>/{info,debug}.log，按级别分流）
 │   ├── hybrid/                # 记忆子代理独立模块（v1.8.0 起为唯一写入路径，由 index.mjs 无条件装配）
 │   │   ├── index.mjs          #   模块入口 registerHybrid（注册工具 + 闸门，返回 runMemorySubagent）
 │   │   ├── prompts.mjs        #   HYBRID_PROACTIVE（注入段二）/ SUBAGENT_SYSTEM（子代理 system prompt）
 │   │   ├── subagent.mjs       #   记忆子代理：ctx.llm.stream + tools 自建工具循环（log_read_section/log_write_ops）
 │   │   └── tools.mjs          #   memory_write / memory_update_section / memory_reorganize + pre-execute 闸门
-│   ├── distill.mjs            # 蒸馏核心：distillProjectMemory（乐观锁 + 原子覆盖）
 │   ├── tools.mjs              # 四个记忆工具（memory_note / _user / _read / _delete）+ pre-execute 删除确认闸门
-│   ├── api.mjs                # /memory-palace/api route（设置读写 + 手动蒸馏，HTTP trust-fence）
+│   ├── api.mjs                # /memory-palace/api route（设置读写，HTTP trust-fence）
+│   ├── projection.mjs         # E 投影：agent/pre-step 把记忆正文/今日日志注为常驻 user 消息（可跳首步）
 │   └── client/                # 前端 client 源码（build 按序零依赖拼接为 lib/client.js 单 bundle）
 │       ├── 00-head.js         #   IIFE 头 + react / NS 初始化
 │       ├── 10-locales.js      #   zh/en 文案
 │       ├── 20-common.js       #   公共助手（fetch 封装等）
 │       ├── 30-settings-section.js  # 设置页「记忆」面板（v1.7.1 起为折叠卡片 + 自定义指令板块）
-│       ├── 40-sparkle.js      #   SPARKLE_SVG 图标常量（内联 sparkle-twinkle.svg）
-│       ├── 50-distill-button.js   # 会话标题栏「记忆」按钮 + 下拉 + 自绘确认弹窗 + 浏览器通知
-│       └── 90-tail.js         #   apply 装配 + settings.section / header.utilities 插槽注册
+│       ├── 40-sparkle.js      #   SPARKLE_SVG 图标常量 + twinkle keyframes（设置页 nav 星标用）
+│       └── 90-tail.js         #   apply 装配 + settings.section 插槽注册
 ├── scripts/
 │   └── build.mjs              # 构建：服务端递归复制 + index.js 入口重命名 + client 按序拼接（零外部依赖）
 ├── cordis.patch.yml           # bundle patch：向 profile 注入本插件配置
 ├── tests/                     # 测试脚本（node 直接运行，无测试框架依赖）
-│   ├── test-load.mjs          # 后端 cordis 单测（注入/桥接/去重/删除/确认弹窗/蒸馏重试等 136 项）
-│   ├── test-hybrid.mjs        # hybrid 单测（章节纯函数/子代理循环 mock/reorganize 门禁，20 项断言）
+│   ├── test-load.mjs          # 后端 cordis 单测（注入/桥接/去重/删除/确认弹窗/plan/静默预设等 112 项）
+│   ├── test-hybrid.mjs        # hybrid 单测（章节纯函数/子代理循环 mock/reorganize 门禁/闸门置位，26 项断言）
+│   ├── test-command.mjs       # 会话命令 /memory_reorganize 单测（门禁/steer/掩码/首步跳过/可选依赖）
 │   ├── test-v1.7.0.mjs        # 投影身份判据/路径/去噪/日志头单测（39 项）
 │   ├── test-v1.4.1.mjs        # budgetClip / stripSmartTag 定向回归
-│   ├── test-distill-route.mjs # 手动蒸馏 route 回归：distill.session 404 / preview size / project 原子替换
 │   └── test-client-smoke.mjs  # 前端 client bundle 冒烟测试
 ├── lib/                       # 构建产物（由 src/ 生成，勿手改）
 └── package.json
@@ -50,14 +48,14 @@ dsh-memory-palace/
 npm run build
 node tests/test-load.mjs            # 后端单测：加载、注入、日志写入、buddy 桥接、去重、memory_read
 node tests/test-hybrid.mjs          # hybrid 单测：章节纯函数、子代理循环（mock LLM）、重整双门禁
+node tests/test-command.mjs         # 会话命令：门禁拒绝 / steer 内置提示 / 禁用 memory_read / 首步跳过投影
 node tests/test-subagent-log.mjs    # 日志落盘单测：门控 / 分级分流 / 隐私红线 / 多会话隔离 / 1MB 上限
 node tests/test-settle-cwd.mjs      # 写侧串台回归：并发结算下记忆与日志的双写隔离（真实 apply）
 node tests/test-session-cwd.mjs     # 读侧串台回归：多会话 cwd 隔离
 node tests/test-planmode-crosstalk.mjs  # plan 模式跨会话串台回归
-node tests/test-v1.4.1.mjs          # 蒸馏日志级别与预算语义
+node tests/test-v1.4.1.mjs          # 日志级别与预算语义
 node tests/test-v1.7.0.mjs          # 投影/路径/去噪/日志头单测
-node tests/test-distill-route.mjs   # 蒸馏 route 回归：distill.session 404 / preview size / project 原子替换
-node tests/test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section / header.utilities 注入
+node tests/test-client-smoke.mjs    # 前端冒烟：bundle 注册、settings.section 注入、已删配置键负向断言
 ```
 
 > 宿主的 `agent/pre-step` 等预览期契约可能随版本变动，升级 DSH 后需核对运行时包的类型声明（见「记忆注入通道」§7.4）。
@@ -68,7 +66,7 @@ v1.8.0-alpha.4 起，插件的**全部诊断输出改为落盘**，不再写 std
 进程内存（`apps/desktop/src/host-process.ts` 存末 64KB），仅崩溃时随报告落盘——正常运行时完全不可见，
 子代理的失败/跳过因此无痕可查。
 
-实现：`src/common/logger.mjs`（`createLogger`），由 `src/index.mjs` 装配并注入 `distill.mjs` /
+实现：`src/common/logger.mjs`（`createLogger`），由 `src/index.mjs` 装配并注入
 `hybrid/subagent.mjs` / `projection.mjs`。
 
 ### 开启方式与相关配置
@@ -76,7 +74,7 @@ v1.8.0-alpha.4 起，插件的**全部诊断输出改为落盘**，不再写 std
 | 配置键 | 默认 | 说明 |
 |---|---|---|
 | `distillDebugLog` | `false` | **总开关**：`true` 才落盘；`false`（默认）时**零输出**——既不写文件也不写终端。设置页「记忆 → 开发」卡片可改 |
-| `distillLogLevel` | `info` | `info` = 只落元数据；`debug` = 额外把 **LLM 原始响应文本**落盘。**无 UI**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置 |
+| `distillLogLevel` | `info` | `info` = 只落元数据；`debug` = 额外把 **LLM 原始响应文本**落盘。**无 UI**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置。⚠️ v1.8.1 起**暂无 raw 生产者**（唯一调用方是已移除的手动蒸馏链路；记忆子代理产出结构化 ops、无原文），该级别当前不改变实际输出 |
 
 > ⚠️ 默认配置下插件**完全静默**（连失败留痕也不落盘，异常告警 `projection skipped` / `tool-hide skipped`
 > 一并静默）——排查前必须先开 `distillDebugLog`。该值为 volatile，热改即生效、无需重启。
@@ -109,18 +107,17 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 |---|---|---|
 | `subagent` | `entry` · `stream turn` · `tool-calls round` · `tool ok` · `done` | 每轮记忆结算。`stream turn` 的 `firstChunkMs`（首包耗时）与 `elapsedMs`（总耗时）用于判断慢在**网关排队**还是**模型生成** |
 | `subagent`（台账） | `done ok=… mode=…`（落在 `info.log`） | 每轮一行，含 `appliedWrites` / `toolAttempts` / `unknownHits` / `retries` / `cwd` / `isError` |
-| `distill` | `project entry` · `project loaded` · `project request` · `project finish` · `project write done` | 项目记忆蒸馏链路（含 `chunks` / `deltaChars` / `firstChunkMs`）；v1.8.1 起原会话蒸馏事件（`session request` / `session parsed` 等）已随该功能移除 |
 | `projection` · `plugin` | `projection skipped` · `tool-hide skipped` | 异常降级告警 |
 
 ### 隐私
 
 - 元数据只含计数、字符数、模型名、路径等，**不含对话正文**
-- `distillLogLevel=debug` 时 LLM 原始响应会落 `debug.log` —— 该**仅限手动蒸馏链路**（子代理链路产出 ops、无原文），定位为「受信本地排障」，仅本地开启
+- `distillLogLevel=debug` 的 raw 通道（LLM 原始响应落 `debug.log`）定位为「受信本地排障」、仅本地开启；v1.8.1 起其唯一生产者（手动蒸馏）已移除，当前无开发者调用
 - 落点在 `$DSH_HOME`（宿主数据目录），**不在用户项目内**，不会被 git 提交
 
 ## 技术要点
 
-- **零依赖构建**：服务端 `src/index.mjs`（含 `src/common/`、`src/distill.mjs`、`src/tools.mjs`、`src/api.mjs`）是标准 ESM，运行时由装载本包的 profile 解析 `@deepseek-ai/*` 依赖，build 纯复制即可；浏览器端 `src/client/`（00-head…90-tail）经 build 按序**零依赖拼接**为 `lib/client.js` 单自包含 bundle——dsh 客户端模块系统（`packages/client/modules`）不支持插件相对 `require`，多文件只能拼接合并不引入打包器。
+- **零依赖构建**：服务端 `src/index.mjs`（含 `src/common/`、`src/tools.mjs`、`src/api.mjs`、`src/projection.mjs`）是标准 ESM，运行时由装载本包的 profile 解析 `@deepseek-ai/*` 依赖，build 纯复制即可（并清理 `src/` 已删文件在 `lib/` 的陈旧副本）；浏览器端 `src/client/`（00-head…90-tail）经 build 按序**零依赖拼接**为 `lib/client.js` 单自包含 bundle——dsh 客户端模块系统（`packages/client/modules`）不支持插件相对 `require`，多文件只能拼接合并不引入打包器。
 - **同步读取**：`systemPrompt.section` 的 `text()` 必须同步（harness 源码不 await），故读盘用 `readFileSync`；写盘走异步 `node:fs/promises`，不在同步热路径上。记忆正文投影（`src/projection.mjs`）同样走同步读盘。
 - **依赖约定**：`@deepseek-ai/*` 声明为 `peerDependencies`，运行时由 profile 的 `node_modules` 提供，本包不捆绑任何 harness 内部模块。
 - **不引入 `dsh-storage`**：其 JSON 落地与"记忆必须可读的 Markdown"这一核心价值冲突，刻意排除。
@@ -128,12 +125,13 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 
 ## 记忆子代理（原 hybrid）要点
 
-- **模块边界**：`src/hybrid/` 独立模块（v1.8.0 起为唯一写入路径，plugin / smart 已删除），由 `index.mjs` **无条件装配**（apply 同步段读不到热配置，条件注册会踩「配置启用但未注册」的坑）。不改动 `distill.mjs` / `tools.mjs` / `api.mjs` 的手动蒸馏与记忆工具行为。
+- **模块边界**：`src/hybrid/` 独立模块（v1.8.0 起为唯一写入路径，plugin / smart 已删除），由 `index.mjs` **无条件装配**（apply 同步段读不到热配置，条件注册会踩「配置启用但未注册」的坑）。不改动 `tools.mjs` / `api.mjs` 的基础记忆工具与设置 route 行为。
 - **记忆子代理 = 自建工具循环**：`ctx.llm.stream` 原生支持 `GenerateOptions.tools`（`finish.kind === 'tool-calls'` 时用 `BlockAssembler.message()` 回喂 assistant 消息 + `createToolResultMessage` 回喂工具结果）——无需 `ctx.subagents`（其要求活 Agent 作父，插件不可用）。循环白名单仅 `log_read_section` / `log_write_ops`。
 - **章节化核心**：`src/common/sections.mjs` 纯函数（parse/locate/append/upsert/create/replace/markEntryDeleted）驱动日志 ops 与 MEMORY.md 工具；`replaceSectionText` 整章节归一化精确匹配防 stale，并**保留章节间分隔空行**。
-- **reorganize 双门禁**：`checkReorgGate`（`src/hybrid/tools.mjs`）机器校验「超出 `workspaceBudgetChars` 且距上次重整 ≥ `reorgCooldownDays`」（阈值刻意 = 注入预算：**超出注入预算 = 该重整了**；门禁只看 `writeDirs[0]` 的主目标 MEMORY.md，buddy 目录那份不参与判定）；时间戳 `<!-- memory-palace:last-reorg:... -->` 由机器读写落 MEMORY.md 文件尾；pre-execute 确认弹窗 + execute 复核双重防线，原子替换沿 distillProjectMemory 的 cover/备份/rename 模式。
+- **reorganize 双门禁**：`checkReorgGate`（`src/hybrid/tools.mjs`）机器校验「超出 `workspaceBudgetChars` 且距上次重整 ≥ `reorgCooldownDays`」（阈值刻意 = 注入预算：**超出注入预算 = 该重整了**；门禁只看 `writeDirs[0]` 的主目标 MEMORY.md，buddy 目录那份不参与判定）；时间戳 `<!-- memory-palace:last-reorg:... -->` 由机器读写落 MEMORY.md 文件尾；pre-execute 确认弹窗 + execute 复核双重防线，原子替换走 cover/备份/rename 模式（备份名 `MEMORY.md.<本地时间戳>`、与原文件同目录）。会话命令 `/memory_reorganize` 与工具**共用同一套门禁**。
+- **重整流程 = 禁 `memory_read`（v1.8.1）**：`memory_read` 的 scope 只到 today/yesterday/近三天，读不到更早的日志，不足以支撑通盘重整。故两条入口都在 `state` 上置位「重整流程」标记（`reorgBySession`），使该会话的工具掩码额外 deny `memory_read`（与静默预设掩码合并成**一个** deny 集合，避免双重 `restrict` 互相覆盖），逼 agent 改用自身文件读取能力直接读 MEMORY.md 与 `memory/` 目录（含历史日期）：① 会话命令 `/memory_reorganize`（handler 内先过门禁再置位）；② agent 自动调 `memory_reorganize` 工具（`attachHybridGuards` 的 pre-execute 在门禁通过后置位）。标记的摘除 = 下一条**非命令注入**的真实用户消息 / `agent/disposed` / 30 分钟 TTL（惰性）——刻意不挂 settle 判据，因为命令注入的消息本身也会触发缓冲 flush，会把刚戴上的掩码立刻误摘。
 - **日志永不过期**：日志作为子代理维护的证据层保留，v1.8.0 起 `records.prune()` 与 `dailyLogRetentionDays` 配置一并删除。
-- **写入并发**：子代理日志落盘经模块级 promise 链（`withLogLock`）串行化，防与手动蒸馏按钮并发覆盖。
+- **写入并发**：子代理日志落盘经模块级 promise 链（`withLogLock`）串行化，防与另一条写入路径并发覆盖。
 - **多章节读取（A 改进）**：`log_read_section` 接受 `sections: string[]`，一次读取多个章节合并返回（未找到的注明）；prompt 强制要求多章节单次传齐（C 改进），避免多轮往返。目录模式典型流程 2-3 轮即可完成。
 - **失败不降级**：子代理超 6 轮 / 超时 / 模型不支持 tools → 本轮放弃，**不写任何轻量原文**（会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。
 - **踩坑**：`node:fs` 的 `writeFile`/`mkdir` 是 callback 版，`await` 会抛 `ERR_INVALID_CALLBACK` 被 catch 吞掉导致静默不落盘——写文件一律用 `node:fs/promises`。
@@ -234,56 +232,18 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 
 读写顺序**刻意不对称**：dsh 原生记忆必须可被读到（否则与 buddy 目录共存时静默失效），而写入仍以 buddy 目录为首选（兼容 WB/CB 原生格式）。
 
-## 蒸馏 —— 失败重试
+## 会话命令 /memory_reorganize（v1.8.1）
 
-项目记忆蒸馏（`distillProjectMemory`）的 LLM 调用经 `src/common/retry.mjs` 的 `runWithRetry` 包裹，单次尝试由 `distill.mjs` 内的 `streamOnce` 负责（每次新建独立 `AbortSignal`，避免单次超时耗尽累计预算）。
+用户手动触发项目记忆重整的唯一入口（原客户端「蒸馏项目记忆」按钮与其服务端蒸馏链路已在 v1.8.1 整体移除）。
 
-真源代码：`src/common/retry.mjs`（`classifyFailure` / `backoffDelayMs` / `runWithRetry` / `RETRY_CONSTANTS` / `LlmRetryExhausted`）。
+- **注册**：`src/index.mjs` 内 `ctx.inject(["commands"], (c) => c.effect(() => c.commands.register({...})))`。`commands` 是**可选依赖**——无命令面的部署里子 fiber 不加载，插件主体照常 ACTIVE（绝不 pending）。
+- **宿主契约**：命令注册表**自身不提交模型消息**，必须 handler 亲自提交——本插件用 `agent.steer(createUserMessage({ content:[{type:'text',text:内置提示}], source:{kind:'user'} }))` 把内置提示作为一条用户消息发给模型。命令名限 `^[a-z][a-z0-9_-]*$`；第三方命令无 i18n，中文文案只能写进 `description`。
+- **handler 门禁顺序**：`enabled` → 会话静默（`isSessionSilent`）→ plan 模式 → 有活动工作区 → `checkReorgGate`（超注入预算 且 过冷却）。任一不过**直接返回 `{kind:'error',text}`**、不产生任何消息。
+- **内置提示**（`REORG_COMMAND_PROMPT`，`src/common/prompts.mjs`）：给出项目 `MEMORY.md` 绝对路径 + 日志目录绝对路径，要求列出 `memory/*.md`（含历史日期）自行读取；**任务定义 = 两删一提一重构**（删过时 / 删重复 / 冗余提炼不丢精度 / 重构结构）；预算 `workspaceBudgetChars` **只是健康参考线、非硬指标**（严禁为达标删除仍有效信息）；**只允许落盘一次**（草稿不会自动保存、不要反复推倒重来）；**必须调用 `memory_reorganize` 工具写入**（唯一带整档备份的路径）；被拦截则**停止并报告**、不绕道；禁动用户级记忆。首行带 `REORG_MESSAGE_PREFIX`（`【项目记忆重整任务】`），用于把命令注入的消息与用户后续真实消息区分开。
+- **跳过首步投影**：命令触发请求的**第一个 step** 不投影项目级 MEMORY.md 与今日日志（用户级照常），命中即清除（`state.reorgSkipFirstStep` + `registerProjection({ skipProjectSide })`）。
+- **禁用 `memory_read`**：见「记忆子代理要点」的重整流程条目。
+- **守卫文案不给替代路径**（v1.8.1-alpha.2）：`checkReorgGate` 的「冷却期内」拒绝语与 `memory_reorganize` description 旧文案曾写「请用 memory_update_section 做章节级修正」/「use memory_update_section instead」——实测中 agent **正是照此绕道**（转做 13 次章节级暴力删改）。现已改为「仅允许落盘一次 → **停止并如实报告**，不得改用其它工具继续删改凑数」。**拦截消息只表达「停止 + 上报」，不给出替代路径**。注意区分：「未超预算」那句正向轻工具引导（`请用 memory_write / memory_update_section 维护`）**保留**。
+- **写入工具体量回显 + 形状层**（v1.8.1-alpha.2）：① 章节化三件套（`memory_write` / `memory_update_section` / `memory_reorganize`）的成功返回附「当前 N/预算 字符（x×）」，预算按 scope 取（project → `workspaceBudgetChars`，user → `userBudgetChars`；`memory_reorganize` 仅 project），**仅回显不拦截**；② 全部写入工具（`memory_note` / `_user` / 三件套）的 description 共用同一套**条目形状规范**（一条一事 / 禁源码坐标 / 禁一次性过程 / 路径只写可复用入口 / URL 只留必须照填基址），并**移除** `memory_note` 系列旧文案里「完成任务后就写、记录做了什么」这类**推流水账**的措辞。详见 `PROMPTS.md` §4.5。
 
-### 6.1 错误分类 `classifyFailure(err)` → `retryable` | `limited` | `fatal`
+> 原 `src/distill.mjs`（手动蒸馏）、`src/common/retry.mjs`（其唯一生产调用方的 LLM 失败重试）、`DISTILL_PROMPT` 与配置项 `projectMaxTokens` 已随该功能一并删除；记忆子代理的 LLM 调用不带重试（失败即本轮放弃、下轮自动补蒸）。
 
-| 分类 | 触发条件（status / code / 文本） | 是否重试 | 说明 |
-|---|---|---|---|
-| `limited` | `429` 限流 / `529` 过载 | ✅ 退避重试 | 速率/负载限制，等待后可继续，同走指数退避 |
-| `retryable` | `5xx` 服务端错误（含 `500`） | ✅ 退避重试 | 瞬时服务端故障；其中 `500-class` 单独限 `HTTP500_MAX_RETRIES` 次（多为主服务挂，重试意义不大且拖慢降级） |
-| `retryable` | 网络类：`ECONNRESET` / `ETIMEDOUT` / `ECONNREFUSED` / `ENETUNREACH` | ✅ 退避重试 | 瞬态网络波动或服务器负载高 |
-| `retryable` | 超时/中断：`AbortError` / `ABORT_ERR` / 文本含 `aborted\|timeout\|timed out\|deadline` | ✅ 退避重试 | 单次独立 `AbortSignal` 触发，不耗尽累计预算 |
-| `fatal` | `401` / `403` 鉴权、`404` 模型不存在、`400` 永久客户端错误 | ❌ 不重试 | 需修正密钥/请求，重试无效 |
-| `fatal` | `ENOTFOUND`（DNS 解析失败） | ❌ 不重试 | 通常需人工干预（升级计划明确要求不重试） |
-| `fatal` | 兜底未知错误 | ❌ 不重试 | 不盲目重试，避免死循环 |
-
-> 判定顺序（源码）：fatal 状态码（401/403/404/400）→ limited（429/529）→ retryable（5xx）→ 网络类 code → 超时/中断文本 → 兜底 fatal。
-
-### 6.2 退避算法 `backoffDelayMs(attempt)`
-
-```
-delay = min(BASE_DELAY_MS * FACTOR^attempt, MAX_DELAY_MS) + jitter(≤15%)
-attempt 从 0 起算（第 1 次重试前等待 base_delay）
-```
-
-常量固化于 `RETRY_CONSTANTS`：
-
-| 常量 | 值 | 含义 |
-|---|---|---|
-| `BASE_DELAY_MS` | `2000` | 初始等待（2s） |
-| `FACTOR` | `2` | 指数增长因子（每次翻倍） |
-| `MAX_RETRIES` | `3` | 通用最大重试次数 |
-| `MAX_DELAY_MS` | `32000` | 单次退避上限（32s） |
-| `HTTP500_MAX_RETRIES` | `1` | `500-class` 单独重试上限（谨慎重试） |
-
-`jitter = random() * (base * 0.15)` —— 随机抖动防止分布式「重试风暴 / 惊群效应」。
-
-### 6.3 重试语义 `runWithRetry(makeAttempt, opts)`
-
-- `limited` / `retryable` 在次数上限内指数退避重试：`500` 类上限取 `HTTP500_MAX_RETRIES`，其余取 `MAX_RETRIES`。
-- `fatal` 立即抛出 `LlmRetryExhausted`（携带 `cls` 分类与 `attempts` 尝试次数），由调用方降级：
-  - 项目蒸馏（`distillProjectMemory`）→ 返回失败消息，**原记忆不动**。
-- 成功 / `max-tokens` 直接返回（文本解析交给 caller；JSON 解析失败自然回落轻量兜底）。
-
-### 6.4 调用约定
-
-- `makeAttempt` 内部**每次新建独立 `AbortSignal`**（单次超时，不耗尽累计预算）。
-- `max-tokens` **不算失败**，正常返回已有文本供 caller 解析。
-- 蒸馏 chat completion 幂等，重试安全；若有函数调用副作用需另行评估幂等性。
-
-提示词与蒸馏契约见 [PROMPTS.md](./PROMPTS.md)；配置项（超时 / 调试日志 / 项目最大 Token）见 [CONFIG.md](./CONFIG.md)。

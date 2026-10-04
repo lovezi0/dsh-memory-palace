@@ -4,9 +4,7 @@
 import { Context } from "@deepseek-ai/cordis";
 import { name, apply, Config, inject } from "../lib/index.js";
 import { createPaths } from "../lib/common/paths.mjs";
-import { createDistill } from "../lib/distill.mjs";
 import { buildProjections } from "../lib/projection.mjs";
-import { classifyFailure, backoffDelayMs, runWithRetry, RETRY_CONSTANTS } from "../lib/common/retry.mjs";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
@@ -222,10 +220,11 @@ console.log("[1c] REMOVED CONFIG FIELDS");
   const [value] = Schema.resolve({ memoryMode: "plugin", autoCaptureErrors: true, summarize: false }, Config);
   assert(value.memoryMode === "plugin", "[1c] 废弃键原样透传（老 profile 不会被装载期拦下）");
   assert(value.summarize === false, "[1c] 废弃的总开关键同样原样透传");
-  // v1.8.1：会话蒸馏下线 —— 其输出预算与回喂开关一并从 schema 摘除（项目蒸馏 / 子代理字段保留）。
+  // v1.8.1：手动蒸馏全线下线 —— 会话蒸馏与项目蒸馏的输出预算一并从 schema 摘除（记忆子代理字段保留）。
   assert(!("summaryMaxTokens" in resolved), "[1c] summaryMaxTokens 已移除（会话蒸馏下线）");
   assert(!("feedbackEnabled" in resolved), "[1c] feedbackEnabled 已移除（回喂随会话蒸馏下线）");
-  assert("projectMaxTokens" in resolved && "summaryTimeoutMs" in resolved, "[1c] 项目蒸馏 / 子代理字段仍在");
+  assert(!("projectMaxTokens" in resolved), "[1c] projectMaxTokens 已移除（项目蒸馏下线）");
+  assert("summaryTimeoutMs" in resolved, "[1c] 记忆子代理超时字段仍在");
   const [legacyBudget] = Schema.resolve({ summaryMaxTokens: 2000, feedbackEnabled: true }, Config);
   assert(legacyBudget.summaryMaxTokens === 2000 && legacyBudget.feedbackEnabled === true,
     "[1c] 新摘除键在老 profile 中原样透传");
@@ -555,7 +554,7 @@ console.log("[W] turn/end wires to the memory sub-agent + text-extraction口径 
 }
 
 // ---------- 场景 P：计划模式禁写记忆（硬默认，无开关） ----------
-console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt");
+console.log("[P1-P6] PLAN MODE → writing blocked, reading still allowed");
 {
   // P1/P2：plan 下三个写工具经 pre-execute 网关 deny（连预览/确认都拦）
   const { captured } = await loadPlugin();
@@ -606,122 +605,6 @@ console.log("[P1-P7] PLAN MODE → writing blocked, read + manual distill exempt
   const readTool = cap6.tools.find((t) => t.name === "memory_read");
   const res6 = await readTool.execute({ scope: "daily" }); // 内容在日志里，须显式指定 scope（v1.7.1）
   assert(res6.ok && res6.memory.includes("约定A"), "[P6] plan: memory_read still works");
-
-  // P7：plan 下手动蒸馏（distillProjectMemory）豁免，仍写盘（真人显式意图）
-  const ws7 = mkdtempSync(join(tmpdir(), "mem-p7-"));
-  const memFile7 = join(ws7, ".deepseek-harness", "MEMORY.md");
-  const fs7 = await import("node:fs/promises");
-  const path7 = await import("node:path");
-  await fs7.mkdir(path7.dirname(memFile7), { recursive: true });
-  await fs7.writeFile(memFile7, "# 项目记忆\n- 旧事实\n", "utf8");
-  const mockLlm7 = makeMockLlm({ text: "## 蒸馏后\n- 事实 Z\n" });
-  const ctx7 = new Context();
-  ctx7.provide("llm", mockLlm7);
-  const cfg7 = { ...BASE, distillDebugLog: false, enabled: true };
-  const state7 = { activeCwd: ws7, planModeActive: true };
-  const paths7 = createPaths(() => cfg7, () => ws7);
-  const distill7 = createDistill({ ctx: ctx7, getConfig: () => cfg7, paths: paths7 });
-  const s7 = fakeSession(ws7);
-  const r7 = await distill7.distillProjectMemory(ws7, s7);
-  assert(r7.ok, "[P7] plan: manual distill still writes (exempt)");
-  const memText7 = readFileSync(memFile7, "utf8");
-  assert(memText7.includes("事实 Z"), "[P7] plan: MEMORY.md updated by manual distill");
-}
-
-// ---------- 场景 R：蒸馏 LLM 失败重试（v1.4.0 特性2） ----------
-console.log("[R] DISTILL RETRY (classify / backoff / runWithRetry)");
-{
-  // R-UNIT：classifyFailure 分类
-  assert(classifyFailure({ status: 500 }).kind === "retryable", "[R] classify 500=retryable");
-  assert(classifyFailure({ status: 503 }).kind === "retryable", "[R] classify 503=retryable");
-  assert(classifyFailure({ status: 429 }).kind === "limited", "[R] classify 429=limited");
-  assert(classifyFailure({ status: 401 }).kind === "fatal", "[R] classify 401=fatal");
-  assert(classifyFailure({ status: 404 }).kind === "fatal", "[R] classify 404=fatal");
-  assert(classifyFailure({ code: "ECONNRESET" }).kind === "retryable", "[R] classify ECONNRESET=retryable");
-  assert(classifyFailure({ name: "AbortError" }).kind === "retryable", "[R] classify AbortError=retryable");
-  assert(classifyFailure({ message: "request aborted by timeout" }).kind === "retryable", "[R] classify aborted msg=retryable");
-  assert(classifyFailure({}).kind === "fatal", "[R] classify unknown=fatal (no blind retry)");
-  assert(classifyFailure({ code: "ENOTFOUND" }).kind === "fatal", "[R] classify ENOTFOUND=fatal (DNS, no blind retry per plan)");
-
-  // R-UNIT：backoff 单调不减且受 MAX_DELAY_MS 夹紧
-  const b0 = backoffDelayMs(0), b1 = backoffDelayMs(1), b2 = backoffDelayMs(10);
-  assert(b0 <= b1 && b1 <= b2, "[R] backoff non-decreasing");
-  assert(b2 <= RETRY_CONSTANTS.MAX_DELAY_MS + Math.ceil(RETRY_CONSTANTS.MAX_DELAY_MS * 0.15), "[R] backoff capped by MAX_DELAY_MS+jitter");
-
-  // 加速：把退避常数压到 ~ms 级，避免重试测试真实睡眠。
-  const savedBase = RETRY_CONSTANTS.BASE_DELAY_MS, savedMax = RETRY_CONSTANTS.MAX_DELAY_MS;
-  RETRY_CONSTANTS.BASE_DELAY_MS = 1;
-  RETRY_CONSTANTS.MAX_DELAY_MS = 2;
-
-  function buildDistill(overrides, llmOpts) {
-    const cfg = { ...BASE, ...overrides };
-    const ctx = new Context();
-    const mockLlm = makeMockLlm(llmOpts || {});
-    ctx.provide("llm", mockLlm);
-    const getConfig = () => cfg;
-    const paths = createPaths(getConfig, () => null);
-    const distill = createDistill({ ctx, getConfig, paths });
-    return { cfg, mockLlm, paths, distill };
-  }
-  // v1.8.1：R1–R5 改用「项目记忆蒸馏」作载体（会话蒸馏已移除，项目蒸馏是 runWithRetry 的唯一存续调用方）。
-  // 项目蒸馏读盘阶段要求 MEMORY.md 非空，否则会提前 return、打不出重试行为，故预置一份。
-  function projectWorkspace(tag) {
-    const ws = mkdtempSync(join(tmpdir(), tag));
-    mkdirSync(join(ws, ".deepseek-harness"), { recursive: true });
-    writeFileSync(join(ws, ".deepseek-harness", "MEMORY.md"), "# 项目记忆\n- 旧事实\n", "utf8");
-    return ws;
-  }
-
-  // R1：503 前 2 次失败 → 重试后第 3 次成功（calls=3，结果 ok）
-  {
-    const ws = projectWorkspace("mem-r1-");
-    const { distill, mockLlm } = buildDistill({}, { failStatus: 503, failTimes: 2, text: "## 蒸馏后\n- 事实 Z\n" });
-    const r = await distill.distillProjectMemory(ws, fakeSession(ws));
-    assert(mockLlm.calls.length === 3, "[R1] 503x2 then success => 3 calls");
-    assert(r.ok === true, "[R1] retry success returns ok");
-    assert(readFileSync(join(ws, ".deepseek-harness", "MEMORY.md"), "utf8").includes("事实 Z"),
-      "[R1] project MEMORY.md replaced after retry success");
-  }
-
-  // R2：fatal（legacy fail，无 status）→ 不重试（calls=1），结果 ok:false
-  {
-    const ws = projectWorkspace("mem-r2-");
-    const { distill, mockLlm } = buildDistill({}, { fail: true });
-    const r = await distill.distillProjectMemory(ws, fakeSession(ws));
-    assert(mockLlm.calls.length === 1, "[R2] fatal error => no retry (1 call)");
-    assert(r.ok === false, "[R2] fatal returns ok:false");
-  }
-
-  // R3：503 永久失败 → 重试耗尽（maxRetries=3 → 4 次调用），结果 ok:false
-  {
-    const ws = projectWorkspace("mem-r3-");
-    const { distill, mockLlm } = buildDistill({}, { failStatus: 503, failForever: true });
-    const r = await distill.distillProjectMemory(ws, fakeSession(ws));
-    assert(mockLlm.calls.length === RETRY_CONSTANTS.MAX_RETRIES + 1, "[R3] 503 forever => MAX_RETRIES+1 calls");
-    assert(r.ok === false, "[R3] exhausted returns ok:false");
-  }
-
-  // R4：500 永久失败 → 单独限到 HTTP500_MAX_RETRIES=1（2 次调用）
-  {
-    const ws = projectWorkspace("mem-r4-");
-    const { distill, mockLlm } = buildDistill({}, { failStatus: 500, failForever: true });
-    const r = await distill.distillProjectMemory(ws, fakeSession(ws));
-    assert(mockLlm.calls.length === RETRY_CONSTANTS.HTTP500_MAX_RETRIES + 1, "[R4] 500 forever => HTTP500_MAX_RETRIES+1 calls");
-    assert(r.ok === false, "[R4] exhausted returns ok:false");
-  }
-
-  // R5：429 永久失败 → 可重试（limited，走通用 maxRetries → 4 次调用）
-  {
-    const ws = projectWorkspace("mem-r5-");
-    const { distill, mockLlm } = buildDistill({}, { failStatus: 429, failForever: true });
-    const r = await distill.distillProjectMemory(ws, fakeSession(ws));
-    assert(mockLlm.calls.length === RETRY_CONSTANTS.MAX_RETRIES + 1, "[R5] 429 forever => MAX_RETRIES+1 calls (limited retryable)");
-    assert(r.ok === false, "[R5] exhausted returns ok:false");
-  }
-
-  // 还原退避常数
-  RETRY_CONSTANTS.BASE_DELAY_MS = savedBase;
-  RETRY_CONSTANTS.MAX_DELAY_MS = savedMax;
 }
 
 // ---------- 场景 M：v1.7.2 预设级静默（官方 minimal「裸测环境」口径） ----------

@@ -13,8 +13,6 @@ import { tmpdir } from "node:os";
 
 import { createLogger } from "../lib/common/logger.mjs";
 import { runMemorySubagent } from "../lib/hybrid/subagent.mjs";
-import { createDistill } from "../lib/distill.mjs";
-import { createPaths } from "../lib/common/paths.mjs";
 
 let passed = 0;
 function ok(name) { passed++; console.log(`  ✓ ${name}`); }
@@ -244,60 +242,53 @@ section("⑩ 高并发交叉写：30 会话 × 5 行 → 零串台");
   ok(`${N} 会话 × ${M} 行并发：零串台`);
 }
 
-section("⑪ 真实链路：distillProjectMemory 双会话【并发】→ 日志各归各目录（串台专项）");
+section("⑪ 真实链路：记忆子代理双会话【并发】→ 日志各归各目录（串台专项）");
 {
-  const base = mkBase("conc-distill");
+  const base = mkBase("conc-subagent");
   const logger = createLogger({ ctx: ctxWith(base), getConfig: cfgOf({ distillDebugLog: true }) });
-  // 模型解析失败（summaryModel 为空 + requestHeader 无 provider/model）→ resolveModel 返回 null
+  // 模型解析失败（summaryModel 为空 + session 无 requestHeader 模型信息）→ resolveModel 返回 null
   // → dbgFail("no model")。该 dbgFail 位于 resolveModel 内、用的是传入 session 的作用域日志器
   // ——正是要验的绑定点。
-  // v1.8.1：载体由 distillSessionCore 换成 distillProjectMemory（前者已随会话蒸馏移除）；
-  // 项目蒸馏读盘要求 MEMORY.md 非空、且 paths 需真实解析（workspaceMemoryDir 必填），故预置工作区。
-  const cfg = cfgOf({ distillDebugLog: true, summaryModel: "", workspaceMemoryDir: ".deepseek-harness/memory" });
-  const mkWs = (tag) => {
-    const ws = mkdtempSync(join(tmpdir(), `mp-proj-${tag}-`));
-    mkdirSync(join(ws, ".deepseek-harness"), { recursive: true });
-    writeFileSync(join(ws, ".deepseek-harness", "MEMORY.md"), "# 项目记忆\n- 旧事实\n", "utf8");
-    return ws;
+  // v1.8.1：载体由 distillProjectMemory（已随手动蒸馏移除）换成真实链路的记忆子代理。
+  const cfg = cfgOf({ distillDebugLog: true, summaryModel: "" });
+  const mkDir = (tag) => {
+    const ws = mkdtempSync(join(tmpdir(), `mp-sub-${tag}-`));
+    const dir = join(ws, ".deepseek-harness", "memory");
+    mkdirSync(dir, { recursive: true });
+    return dir;
   };
-  const wsA = mkWs("a"), wsB = mkWs("b");
-  const paths = createPaths(cfg, () => wsA);
-  const distill = createDistill({
-    ctx: { llm: { listProviders: () => [], listModels: async () => [] } },
-    getConfig: cfg, paths, logger,
-  });
+  const dirA = mkDir("a"), dirB = mkDir("b");
+  const ctx = { llm: { listProviders: () => [], listModels: async () => [] } };
   const bare = (id) => ({ id, requestHeader: () => ({}) });
+  const state = { lastSummarizedSeq: 0 };
   await Promise.all([
-    distill.distillProjectMemory(wsA, bare("dA")),
-    distill.distillProjectMemory(wsB, bare("dB")),
+    runMemorySubagent({ ctx, getConfig: cfg, paths: null, state, session: bare("dA"), dirs: [dirA], isError: false, logger }),
+    runMemorySubagent({ ctx, getConfig: cfg, paths: null, state, session: bare("dB"), dirs: [dirB], isError: false, logger }),
   ]);
   await logger.flush();
   const a = read(join(logsDir(base, "dA"), "info.log"));
   const b = read(join(logsDir(base, "dB"), "info.log"));
-  assert.ok(a && a.includes("resolveModel: no model resolved"), "dA 应记录自身的 no model");
-  assert.ok(b && b.includes("resolveModel: no model resolved"), "dB 应记录自身的 no model");
+  assert.ok(a && a.includes("no model"), "dA 应记录自身的 no model");
+  assert.ok(b && b.includes("no model"), "dB 应记录自身的 no model");
   assert.equal(read(join(logsDir(base, "__nosession__"), "info.log")), null, "两个会话都有身份，不得落 __nosession__/");
-  ok("项目蒸馏并发：resolveModel 留痕各归各会话目录");
+  ok("记忆子代理并发：模型解析留痕各归各会话目录");
 }
 
 section("⑫ 无会话身份（session=undefined）→ 落 __nosession__/（而非误记到别的会话）");
 {
   const base = mkBase("nosess2");
   const logger = createLogger({ ctx: ctxWith(base), getConfig: cfgOf({ distillDebugLog: true }) });
-  const cfg = cfgOf({ distillDebugLog: true, summaryModel: "", workspaceMemoryDir: ".deepseek-harness/memory" });
-  const ws = mkdtempSync(join(tmpdir(), "mp-proj-nosess-"));
-  mkdirSync(join(ws, ".deepseek-harness"), { recursive: true });
-  writeFileSync(join(ws, ".deepseek-harness", "MEMORY.md"), "# 项目记忆\n- 旧事实\n", "utf8");
-  const paths = createPaths(cfg, () => ws);
-  const distill = createDistill({
-    ctx: { llm: { listProviders: () => [], listModels: async () => [] } },
-    getConfig: cfg, paths, logger,
-  });
-  const r = await distill.distillProjectMemory(ws, undefined);
+  const cfg = cfgOf({ distillDebugLog: true, summaryModel: "" });
+  const ws = mkdtempSync(join(tmpdir(), "mp-sub-nosess-"));
+  const dir = join(ws, ".deepseek-harness", "memory");
+  mkdirSync(dir, { recursive: true });
+  const ctx = { llm: { listProviders: () => [], listModels: async () => [] } };
+  const state = { lastSummarizedSeq: 0 };
+  const r = await runMemorySubagent({ ctx, getConfig: cfg, paths: null, state, session: undefined, dirs: [dir], isError: false, logger });
   await logger.flush();
-  assert.equal(r.ok, false, "无模型可解析时应失败返回");
+  assert.equal(r.ok, false, "无会话时应失败返回");
   const f = read(join(logsDir(base, "__nosession__"), "info.log"));
-  assert.ok(f && f.includes("resolveModel: no model resolved"), "无身份时落 __nosession__/，不得挂到任何具体会话");
+  assert.ok(f && f.includes("disabled or no session/dirs"), "无身份时落 __nosession__/，不得挂到任何具体会话");
   ok("无会话身份 → __nosession__/ 隔离");
 }
 

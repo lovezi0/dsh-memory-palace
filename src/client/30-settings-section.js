@@ -1,4 +1,4 @@
-    // v1.6.0-rc1：模型枚举改走 ctx.remote.session.modelCatalog()——ApiProxy 包已在
+    // 模型枚举改走 ctx.remote.session.modelCatalog()——ApiProxy 包已在
     // DSH 0.1.2-alpha.2 删除（旧 conn.api.llm.models 死了）。服务缺席 / 非 ok / 异常
     // 一律降级为空列表，下拉只剩「复用当前会话模型」，UX 不变。
     async function fetchModelOptions(ctx) {
@@ -29,7 +29,7 @@
       const [failed, setFailed] = react.useState(false);
       const [validation, setValidation] = react.useState(null);
       const [modelOptions, setModelOptions] = react.useState([]);
-      // v1.7.1（特性2）：折叠卡片的展开态（key → bool）。照抄宿主 ui-settings-plugins/PluginCard
+      // 折叠卡片的展开态（key → bool）。照抄宿主 ui-settings-plugins/PluginCard
       // 的语义 —— 纯前端临时状态、**不持久化**：「用户打开哪张卡」是一次阅读手势，不是配置。
       const [openCards, setOpenCards] = react.useState({});
 
@@ -109,7 +109,7 @@
             } else if (field === "buddyWorkspaceMemoryDirs") {
               section[field] = text.split(",").map((s) => s.trim()).filter(Boolean);
             } else if (field === "silentPresets") {
-              // v1.7.2：数组型配置（同 buddyWorkspaceMemoryDirs）。空串 → 空数组 = 关闭该机制。
+              // 数组型配置（同 buddyWorkspaceMemoryDirs）。空串 → 空数组 = 关闭该机制。
               section[field] = text.split(",").map((s) => s.trim()).filter(Boolean);
             } else {
               if (text !== "") section[field] = text;
@@ -210,7 +210,7 @@
         borderTop: "1px solid var(--dsw-alias-border-l2, #e5e7eb)"
       };
 
-      // ---- v1.7.1（特性2）：折叠卡片样式 —— 逐值照抄宿主 ui-settings-plugins 的 PluginCard.module.css ----
+      // ---- ：折叠卡片样式 —— 逐值照抄宿主 ui-settings-plugins 的 PluginCard.module.css ----
       // 竖向「name 叠在 description 上」的卡片宿主无可复用组件（它导出的 DisclosureRow 是横向 24px
       // 紧凑行，布局不同，宿主 README 亦明确区分二者），故手写；chevron 用 data URI 内联 SVG
       // （本项目 client 只能 require("react")，不引宿主图标包）。
@@ -373,7 +373,7 @@
         // 强制覆盖宿主 Webview 全局样式对原生 checkbox 尺寸的覆盖（内联 style 可能不敌全局 CSS）。
         h("style", null,
           ".memory-palace-settings input[type=checkbox]{width:18px!important;height:18px!important;margin:0;flex-shrink:0!important;cursor:pointer;}" +
-          // v1.7.1（特性2）：展开区首条元素自带 borderTop（row/toggle 共用该样式），会与
+          // 展开区首条元素自带 borderTop（row/toggle 共用该样式），会与
           // .mp-card-body 的 border-top 叠成双线 → 去掉首条的边框与上内边距。
           ".memory-palace-settings .mp-card-body > *:first-child{border-top:0!important;padding-top:0!important;}" +
           ".memory-palace-settings .mp-card-header:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4b5bff);outline-offset:-2px;border-radius:16px;}"
@@ -409,7 +409,7 @@
               type: "text",
               placeholder: ".workbuddy/memory, .codebuddy/memory"
             }), "buddyWorkspaceMemoryDirs"),
-          // v1.7.2：静默预设（极简模式等）。命中后本插件在该会话整体隐身（提示词/投影/工具/写入/子代理）。
+          // 静默预设（极简模式等）。命中后本插件在该会话整体隐身（提示词/投影/工具/写入/子代理）。
           // 用普通文本输入（非 num —— 这里填的是预设 id 列表，不是数字）。
           row(t("silentPresetsLabel"), t("silentPresetsHint"),
             h("input", {
@@ -421,7 +421,7 @@
               onChange: (e) => edit("silentPresets", e.target.value)
             }), "silentPresets")
         ]),
-        // v1.7.1（特性3）：自定义指令。非空时经 system prompt 追加到「记忆分工说明」之后；
+        // 自定义指令。非空时经 system prompt 追加到「记忆分工说明」之后；
         // 它是恒定内容（用户配置一次不变），故放 section 而非 E 投影 —— 零缓存成本。
         card("custom", t("custom"), t("customDesc"), [
           row(t("customLabel"), t("customHint"),
@@ -442,7 +442,7 @@
             }), "customInstructions")
         ]),
         card("smartSummary", t("smartSummary"), t("smartSummaryDesc"), [
-          // ---- v1.8.0：本卡片内三处删除已落地——① 记忆写入总开关：写入恒定进行，停写只剩
+          // ---- 本卡片内三处删除已落地——① 记忆写入总开关：写入恒定进行，停写只剩
           // profile config 的 enabled=false 与静默预设（silentPresets，见「核心」卡片）；
           // ② 记忆模式下拉与模式条件块（随原 plugin / smart 两模式删除）；
           // ③ 错误自动记录、日志保留天数两项配置。
@@ -452,8 +452,9 @@
             row(t("reorgCooldownLabel"), t("reorgCooldownHint"), h("input", num("reorgCooldownDays")), "reorgCooldownDays"),
             row(t("subagentLogBudgetLabel"), t("subagentLogBudgetHint"), h("input", num("subagentLogBudget")), "subagentLogBudget")
           ]),
-          // ---- v1.6.3：蒸馏/模型参数常显（v1.8.0 起 summaryModel 只被手动蒸馏与记忆子代理读取）----
-          // v1.8.1：本组只剩 summaryModel / projectMaxTokens——「蒸馏会话」与回喂开关已随该功能移除。
+          // ---- 蒸馏/模型参数常显 ----
+          // 本组只剩 summaryModel（记忆子代理模型）——「蒸馏会话」「蒸馏项目记忆」及其
+          // 输出预算项已随这两个功能整体移除。
           h("div", null, [
             row(t("summaryModelLabel"), t("summaryModelHint"),
               h("select", {
@@ -466,14 +467,13 @@
               }, [
                 h("option", { value: "" }, "复用当前会话模型"),
                 ...modelOptions.map((o) => h("option", { value: o.value }, o.label))
-              ]), "summaryModel"),
-            row(t("projectMaxTokensLabel"), t("projectMaxTokensHint"), h("input", num("projectMaxTokens")), "projectMaxTokens")
+              ]), "summaryModel")
           ])
         ]),
         card("storage", t("storage"), t("storageDesc"), [
           row(t("userPathLabel"), t("userPathHint"), h("input", { ...num("userMemoryPath"), type: "text" }), "userMemoryPath"),
           row(t("wsDirLabel"), t("wsDirHint"), h("input", { ...num("workspaceMemoryDir"), type: "text" }), "workspaceMemoryDir"),
-          // ---- v1.8.0：日志保留天数配置已删除 —— 日志由记忆子代理维护、永不过期不删 ----
+          // ---- 日志保留天数配置已删除 —— 日志由记忆子代理维护、永不过期不删 ----
           row(t("userBudgetLabel"), t("userBudgetHint"), h("input", num("userBudgetChars")), "userBudgetChars"),
           row(t("wsBudgetLabel"), t("wsBudgetHint"), h("input", num("workspaceBudgetChars")), "workspaceBudgetChars")
         ]),

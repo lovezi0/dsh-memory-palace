@@ -34,13 +34,14 @@
 > 旧 profile 里若仍写着这些键，作为未知键原样透传、静默失效。
 >
 > **v1.8.1 破坏性变更**：`summaryMaxTokens`（会话蒸馏输出预算）与 `feedbackEnabled`（蒸馏时回喂存量记忆）
-> 已随「蒸馏会话」功能一并从 schema 摘除；老 profile 里的旧值同样作为未知键透传、静默失效。
+> 已随「蒸馏会话」功能一并从 schema 摘除；`projectMaxTokens`（项目蒸馏输出软预算）随「蒸馏项目记忆」功能
+> 一并摘除。老 profile 里的旧值同样作为未知键透传、静默失效。项目记忆重整改由会话命令 `/memory_reorganize`
+> 触发（手写命令 + 模型自查后调用 `memory_reorganize` 工具，不再有客户端按钮）。
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 模型 | `summaryModel` | `""`（空=复用当前会话模型） | 手动「蒸馏项目记忆」与记忆子代理共用。留空自动复用当前会话 provider/model；也可填已配置的模型固定廉价小模型省 token |
-| 项目蒸馏最大输出 Token | `projectMaxTokens` | `8000` | **最终输出软预算**（prompt 约束，思考不受限）。手动「蒸馏项目记忆」LLM 的成稿长度预算；可上调 |
-| 重整冷却(天) | `reorgCooldownDays` | `7` | 项目级 MEMORY.md 全量重整的冷却天数（距上次重整）；与「超出注入预算」双条件**同时满足**才允许 `memory_reorganize`；时间戳以 HTML 注释落在 MEMORY.md 文件尾 |
+| 模型 | `summaryModel` | `""`（空=复用当前会话模型） | 记忆子代理使用的模型。留空自动复用当前会话 provider/model；也可填已配置的模型固定廉价小模型省 token |
+| 重整冷却(天) | `reorgCooldownDays` | `7` | 项目级 MEMORY.md 全量重整的冷却天数（距上次重整）；与「超出注入预算」双条件**同时满足**才允许重整——会话命令 `/memory_reorganize` 与 `memory_reorganize` 工具共用此门禁；时间戳以 HTML 注释落在 MEMORY.md 文件尾 |
 | 子代理日志回喂预算(字符) | `subagentLogBudget` | `20000` | 记忆子代理回喂今日工作日志的字符上限；超出时仅回喂章节目录，子代理用 `log_read_section` 按需读取章节 |
 
 ## 存储路径与预算（设置页「记忆 → 存储路径与预算」卡片）
@@ -56,7 +57,7 @@
 
 | 配置项 | 设置 key | 默认值 | 说明 |
 |---|---|---|---|
-| 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 蒸馏 LLM 调用超时（覆盖手动「蒸馏项目记忆」与记忆子代理两条链路），超时视为失败并降级；设置页以秒显示（默认 60 秒） |
+| 蒸馏超时(毫秒) | `summaryTimeoutMs` | `60000` | 记忆子代理 LLM 调用超时，超时视为失败并降级；设置页以秒显示（默认 60 秒） |
 | 蒸馏调试日志 | `distillDebugLog` | `false` | 调试开关：开启后把本插件**全部诊断日志落盘**（v1.8.0-alpha.4 起不再输出 stderr）。落点 = `<profile 目录>/.memory-palace/logs/<会话 id>/`（如 `$DSH_HOME/profiles/web/.memory-palace/logs/<sid>/`）。按级别分文件：`info.log` 收失败/跳过留痕与子代理终态台账；`debug.log` 收详单（配合 `distillLogLevel=debug` 另含 LLM 原始响应文本）。关闭（默认）时零输出。单文件上限 1 MB、不自动清理。仅排障用 |
 | 蒸馏日志级别 | `distillLogLevel` | `info` | **平铺独立配置键（不进设置页 UI）**，经 profile 的 `cordis.patch.yml` 在 `memory-palace` 条目 `config` 下设置（dsh 0.1.7 起 settings.yaml 已被宿主移除并一次性导入 profile）。可选 `info` \| `debug`：info=只落盘元数据诊断；debug=额外把 LLM 原始响应文本落盘到 `debug.log`。读不到时默认 `info`。与 `distillDebugLog` 平铺双键设计以保证向后兼容（未知键被忽略不报错） |
 

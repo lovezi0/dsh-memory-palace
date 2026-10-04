@@ -71,11 +71,14 @@ export function registerTools({ ctx, getConfig, paths, state }) {
     defineTool({
       name: "memory_note",
       description:
-        "Save a durable PROJECT-LEVEL memory entry to the active workspace's MEMORY.md " +
+        "Save ONE durable PROJECT-LEVEL memory entry to the active workspace's MEMORY.md " +
         "(the project's .workbuddy/memory, .codebuddy/memory, or .deepseek-harness/MEMORY.md). " +
-        "Call it proactively after completing tasks for the CURRENT project (record what was done + key result / paths / numbers), " +
-        "and when the user states a lasting preference, convention, or fact, or a key decision / root-cause fix is established. " +
-        "Format: one-line conclusion first, then key details. For cross-project user-level memory, use memory_note_user instead.",
+        "Write ONLY when the NEXT session would go wrong without it — a lasting preference, convention, " +
+        "key decision, or root-cause fix. Do NOT log step-by-step work or one-off process (that belongs in the daily log). " +
+        "Format: ONE concise line, conclusion first, objective third-person. " +
+        "CONTENT RULES: no source coordinates (`file.go:123`), no one-off material (error dumps, command output, " +
+        "throwaway URLs); paths = reusable entry points only; URLs = must-reuse base addresses only. " +
+        "For cross-project user-level memory, use memory_note_user instead.",
       parameters: {
         content: {
           type: "string",
@@ -122,10 +125,13 @@ export function registerTools({ ctx, getConfig, paths, state }) {
     defineTool({
       name: "memory_note_user",
       description:
-        "Save a durable USER-LEVEL (cross-project) preference or fact to the user-level MEMORY.md " +
+        "Save ONE durable USER-LEVEL (cross-project) preference or fact to the user-level MEMORY.md " +
         `(default ${toHomeShort(expandHome(cfg().userMemoryPath))}). ` +
-        "Call it proactively when the user states a personal preference / constraint that applies across ALL projects, " +
-        "or a reusable fact / decision worth keeping for future sessions. Format: one-line conclusion first, then key details. " +
+        "Write ONLY when the fact applies across ALL projects and the next session would need it — " +
+        "a personal preference / constraint, or a reusable fact / decision. Not for one-off process. " +
+        "Format: ONE concise line, conclusion first. " +
+        "CONTENT RULES: no source coordinates (`file.go:123`), no one-off material (error dumps, command output, " +
+        "throwaway URLs); paths = reusable entry points only; URLs = must-reuse base addresses only. " +
         "For current-project conventions, use memory_note instead.",
       parameters: {
         content: {
@@ -168,7 +174,7 @@ export function registerTools({ ctx, getConfig, paths, state }) {
 
   // ---------- 可选工具：读取记忆（scope 控制范围，默认只读 durable 长期记忆） ----------
   // AI 说"读取项目记忆/看看记忆"时直接调用，返回聚合内容，避免 AI 自己翻文件、只找 MEMORY.md 而漏掉项目级记忆。
-  // v1.7.1：加 scope（memory 默认 / project / today / yesterday / daily / all）—— 当日日志实测
+  // 加 scope（memory 默认 / project / today / yesterday / daily / all）—— 当日日志实测
   // 可达 1.7 万字符，默认值刻意不含它；确实需要日志时必须显式传 scope。
   // project 原名 node —— 为与 memory_write / memory_update_section 的 scope='project' 统一而更名，消除读写两侧命名歧义。
   ctx.tools.register(
@@ -210,7 +216,7 @@ export function registerTools({ ctx, getConfig, paths, state }) {
         const c = cfg();
         if (!c.enabled) return { ok: false, message: "memory-palace is currently disabled in settings.", memory: "" };
         const cwd = sessionCwd(exec);
-        // v1.7.1：默认 scope='memory'（长期记忆）。刻意不设 'all' —— 默认全量会让 agent
+        // 默认 scope='memory'（长期记忆）。刻意不设 'all' —— 默认全量会让 agent
         // 不加思考地把日志（实测单日可达 1.7 万字符）一起吞下，白白吃掉上下文。
         const scope = args?.scope ?? "memory";
         const wantUser = scope === "memory" || scope === "all";
@@ -244,7 +250,7 @@ export function registerTools({ ctx, getConfig, paths, state }) {
               const t = readMdSync(join(dir, `${day}.md`));
               if (!t) continue;
               const label = n === 0 ? "今日" : n === 1 ? "昨日" : "前日";
-              // v1.8.0-alpha.1 修复（D2）：日志 scope 先剥删除线墓碑再裁剪——墓碑对日志阅读是
+              // 修复：日志 scope 先剥删除线墓碑再裁剪——墓碑对日志阅读是
               // 纯噪声（实测 79 有效+42 墓碑 → 返回 51+14，28 条有效被墓碑挤掉）。注意
               // memory/project scope 刻意**保留**墓碑不过滤：memory_update_section 的 replace
               // 模式要求 oldText 与磁盘含墓碑逐字一致，过滤会让 stale 校验永远失败。

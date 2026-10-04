@@ -3,7 +3,7 @@
 // 因此此处不需要打包/转译，纯复制 + 零依赖拼接即可保持 build 步骤存在且零外部依赖。
 // 入口约定：src/index.mjs → lib/index.js（package.json main 指向 lib/index.js）；
 //          src/client/*.js → lib/client.js（浏览器 bundle 单文件，dsh.client.inject 引用）。
-import { mkdirSync, cpSync, copyFileSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, cpSync, copyFileSync, existsSync, rmSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // npm run build 运行时 cwd 即为包根目录。
@@ -12,8 +12,25 @@ const src = join(root, "src");
 const lib = join(root, "lib");
 mkdirSync(lib, { recursive: true });
 
-// 递归复制整个 src/ 到 lib/（保持原扩展名，如 common/、distill.mjs、tools.mjs 等模块）。
+// 递归复制整个 src/ 到 lib/（保持原扩展名，如 common/、tools.mjs、projection.mjs 等模块）。
 if (existsSync(src)) cpSync(src, lib, { recursive: true });
+
+// 清理陈旧产物：cpSync 是"合并复制"，src/ 已删除的文件会残留在 lib/ 里并随仓库分发
+// （曾出现删除 src/distill.mjs、src/common/retry.mjs 后 lib/ 仍留旧副本）。逐文件比对 src/，
+// 无对应源文件且非生成物则删除。rmSync 在 WorkBuddy safe-delete shim 下可能报错，故 try-catch。
+const GENERATED = new Set(["index.js", "client.js"]);
+function pruneLib(dir, rel = "") {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+    const libPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      pruneLib(libPath, relPath);
+    } else if (!GENERATED.has(relPath) && !existsSync(join(src, relPath))) {
+      try { rmSync(libPath, { force: true }); } catch {}
+    }
+  }
+}
+pruneLib(lib);
 
 // 服务端入口：src/index.mjs → lib/index.js（与 package.json main 对齐）。
 copyFileSync(join(src, "index.mjs"), join(lib, "index.js"));
@@ -31,7 +48,6 @@ const CLIENT_PARTS = [
   "20-common.js",
   "30-settings-section.js",
   "40-sparkle.js",
-  "50-distill-button.js",
   "90-tail.js",
 ];
 const clientDir = join(src, "client");

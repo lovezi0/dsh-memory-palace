@@ -20,11 +20,11 @@ import { budgetClip, stripSmartTag } from "../src/common/text.mjs";
 
 // 3. 超预算：头部结构行保留 + 尾部最新条目保留 + 中间截断标记
 {
-  const lines = ["# new-api 记忆", "", "- 旧结论A", "- 旧结论B", "- 旧结论C", "- 新结论D"];
+  const lines = ["# 示例项目 记忆", "", "- 旧结论A", "- 旧结论B", "- 旧结论C", "- 新结论D"];
   const text = lines.join("\n");
   // 预算只够装 标题+空行 和最后一条
-  const out = budgetClip(text, "# new-api 记忆\n".length + 1 + "- 新结论D".length);
-  assert.ok(out.startsWith("# new-api 记忆"), "头部结构行应保留");
+  const out = budgetClip(text, "# 示例项目 记忆\n".length + 1 + "- 新结论D".length);
+  assert.ok(out.startsWith("# 示例项目 记忆"), "头部结构行应保留");
   assert.ok(out.endsWith("- 新结论D"), "尾部最新条目应保留");
   assert.ok(out.includes("已截断"), "应含截断标记");
   assert.ok(!out.includes("旧结论A"), "中间旧条目应被裁掉");

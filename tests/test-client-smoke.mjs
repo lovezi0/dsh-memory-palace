@@ -109,6 +109,10 @@ if (!Array.isArray(injectFace) || !injectFace.includes("remote") || !injectFace.
 }
 const reg = registrations.find((r) => r.name === "settings.section");
 if (!reg) throw new Error("FAIL: settings.section not injected");
+// v1.8.1：会话标题栏「记忆」按钮已随「蒸馏项目记忆」移除——客户端不得再注入 header utilities 槽位。
+if (registrations.some((r) => r.name === "conversation.session.header.utilities")) {
+  throw new Error("FAIL: conversation.session.header.utilities must no longer be injected (v1.8.1 removed the memory button)");
+}
 const entry = reg.fn();
 console.log(
   "section entry =",
@@ -174,7 +178,7 @@ console.log("locale keys:", Object.keys(localeDict.zh).length, "| zh ≡ en");
 // ⚠️ 不走渲染断言：相关控件已删除，改为源码级负向断言，防止后续误把已删字段接回客户端
 // （会与已移除的 schema 字段脱节）。
 // v1.8.0：模式选择器（memoryMode）/ 写入总开关（summarize）/ 错误记录（autoCaptureErrors）/ 日志保留（dailyLogRetentionDays）
-// v1.8.1：会话蒸馏输出预算（summaryMaxTokens）/ 回喂存量记忆（feedbackEnabled）
+// v1.8.1：会话蒸馏输出预算（summaryMaxTokens）/ 回喂存量记忆（feedbackEnabled）/ 项目蒸馏输出预算（projectMaxTokens）
 const REMOVED_KEY_PATTERNS = [
   [/memoryMode/, "memoryMode"],
   [/autoCaptureErrors/, "autoCaptureErrors"],
@@ -182,6 +186,7 @@ const REMOVED_KEY_PATTERNS = [
   [/\bsummarize\b/, "summarize"],
   [/summaryMaxTokens/, "summaryMaxTokens"],
   [/feedbackEnabled/, "feedbackEnabled"],
+  [/projectMaxTokens/, "projectMaxTokens"],
 ];
 for (const [re, name] of REMOVED_KEY_PATTERNS) {
   if (re.test(src)) throw new Error(`FAIL: client source must not reference removed config key "${name}" (v1.8.0 / v1.8.1)`);

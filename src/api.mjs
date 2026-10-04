@@ -1,9 +1,9 @@
-// memory-palace 自有同源 route（/memory-palace/api）：设置读写（真保存）+ 手动蒸馏（项目记忆）。
-// 经 registerApi 注入 ctx/paths/distill/运行时状态/设置面；在 index.mjs 装配时调用一次。
-// 机制（v1.1.3）：client 直接 fetch 本 route，handler 内走服务端 settings.replace → settings-file 持久化，
+// memory-palace 自有同源 route（/memory-palace/api）：设置读写（真保存）。
+// 经 registerApi 注入 ctx/paths/设置面；在 index.mjs 装配时调用一次。
+// 机制：client 直接 fetch 本 route，handler 内走服务端 settings.replace → settings-file 持久化，
 // 绕开 settingsScope（非 loopback 下 set() no-op）与 apiproxy allowlist 两层限制（参考 dsh-better-sidebar）。
-import { readMdSync } from "./common/text.mjs";
-
+// distill.project / distill.project.preview 两个 action 已随「蒸馏项目记忆」功能移除，
+// 本 route 现仅剩设置读写（settings.get / settings.update）。
 const API_MAX_BODY_BYTES = 1 << 20;
 
 function apiHeader(headers, name) {
@@ -99,7 +99,7 @@ function apiWriteError(res, error) {
   });
 }
 
-// v1.6.0 联动纯函数（可单测）：distillDebugLog=true 时保证 distillLogLevel 存在（默认 info），
+// 联动纯函数（可单测）：distillDebugLog=true 时保证 distillLogLevel 存在（默认 info），
 // false 时移除 distillLogLevel。distillLogLevel 是平铺键（不进 UI），由 settings.update 在此兜底。
 export function applyDebugLogLinkage(section) {
   if (section && typeof section === "object" && !Array.isArray(section)) {
@@ -113,9 +113,9 @@ export function applyDebugLogLinkage(section) {
 }
 
 /**
- * @param {{ ctx: object, paths: object, distill: object, getSettingsFace: () => object | null }} deps
+ * @param {{ ctx: object, getSettingsFace: () => object | null }} deps
  */
-export function registerApi({ ctx, paths, distill, getSettingsFace }) {
+export function registerApi({ ctx, getSettingsFace }) {
   ctx.effect(
     () =>
       ctx.webServer.register({
@@ -149,7 +149,7 @@ export function registerApi({ ctx, paths, distill, getSettingsFace }) {
               if (section === null || typeof section !== "object" || Array.isArray(section)) {
                 throw Object.assign(new Error("section must be a plain object"), { code: "bad-request", status: 400 });
               }
-              // v1.6.0 联动：distillDebugLog=true 时保证 distillLogLevel 存在（默认 info，保证
+              // 联动：distillDebugLog=true 时保证 distillLogLevel 存在（默认 info，保证
               // 服务端日志开启即输出元数据诊断）；false 时移除 distillLogLevel（防止残留 debug
               // 级别持续打印 LLM 原始响应文本）。distillLogLevel 是平铺键（不进 UI），在此统一兜底。
               applyDebugLogLinkage(section);
@@ -158,38 +158,6 @@ export function registerApi({ ctx, paths, distill, getSettingsFace }) {
               }
               const expectedRevision = typeof payload?.expectedRevision === "number" ? payload.expectedRevision : undefined;
               apiWriteOk(res, await face.replace(section, expectedRevision));
-              return;
-            }
-            // ---- v1.2.0 手动蒸馏（会话标题栏「记忆」按钮）----
-            // v1.8.1：只剩「蒸馏项目记忆」；原 distill.session 分支已随该功能移除。
-            if (method === "distill.project" || method === "distill.project.preview") {
-              const sid = typeof payload?.sessionId === "string" ? payload.sessionId : "";
-              // sessions 服务不在顶层 inject（测试环境无此服务时插件仍应激活），route 内惰性解析。
-              let session = null;
-              try {
-                const store = ctx.get("sessions");
-                session = store && typeof store.get === "function" ? store.get(sid) : null;
-              } catch {
-                session = null;
-              }
-              if (!session) {
-                throw Object.assign(new Error(`session not found: ${sid || "(empty)"}`), { code: "not-found", status: 404 });
-              }
-              const cwd = session.header?.cwd ?? null;
-              if (!cwd) {
-                throw Object.assign(new Error("session has no cwd"), { code: "bad-request", status: 400 });
-              }
-              if (method === "distill.project.preview") {
-                const dirs = paths.writeDirs(cwd);
-                if (!dirs.length) {
-                  throw Object.assign(new Error("no memory dirs for this workspace"), { code: "bad-request", status: 400 });
-                }
-                const memFile = paths.memoryFileOf(dirs[0], cwd);
-                apiWriteOk(res, { size: readMdSync(memFile).length });
-                return;
-              }
-              // distill.project
-              apiWriteOk(res, await distill.distillProjectMemory(cwd, session));
               return;
             }
             apiWriteError(res, Object.assign(new Error(`unknown memory-palace API method "${method}"`), { code: "not-found", status: 404 }));
