@@ -52,7 +52,7 @@ function makeHarness() {
       },
     },
     webServer: { register() { return () => {}; } },
-    webRuntime: {},
+    webStartup: {},
   };
   const cfg = {
     enabled: true,

@@ -147,9 +147,9 @@ async function loadPlugin(overrides = {}, llmOpts) {
   const captured = { sections: [], tools: [], listeners: {} };
   ctx.provide("systemPrompt", { section: (s) => { captured.sections.push(s); return () => {}; } });
   ctx.provide("tools", { register: (t) => { captured.tools.push(t); } });
-  // 设置读写 route 依赖 webServer/webRuntime（mock no-op；route 只在真实请求时执行）。
+  // 设置读写 route 依赖 webServer/webStartup（mock no-op；route 只在真实请求时执行）。
   ctx.provide("webServer", { register: () => {} });
-  ctx.provide("webRuntime", { trustedHosts: [] });
+  ctx.provide("webStartup", { trustedHosts: [] });
   const mockLlm = makeMockLlm(llmOpts || {});
   ctx.provide("llm", mockLlm);
   const origOn = ctx.on.bind(ctx);

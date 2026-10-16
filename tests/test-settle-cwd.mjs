@@ -55,7 +55,7 @@ function makeHarness(opts = {}) {
       },
     },
     webServer: { register() { return () => {}; } },
-    webRuntime: {},
+    webStartup: {},
   };
   // 让 mock 落盘内容带上"发起会话"标记：这样即便目录对了，也能发现内容归属错误。
   let currentSessionTag = "UNKNOWN";

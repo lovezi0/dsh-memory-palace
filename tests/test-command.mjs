@@ -33,7 +33,7 @@ async function loadPlugin(overrides = {}, { withCommands = true } = {}) {
   ctx.provide("systemPrompt", { section: () => () => {} });
   ctx.provide("tools", { register: () => {} });
   ctx.provide("webServer", { register: () => {} });
-  ctx.provide("webRuntime", { trustedHosts: [] });
+  ctx.provide("webStartup", { trustedHosts: [] });
   ctx.provide("llm", { stream() { throw new Error("not used"); }, listProviders: () => [], listModels: async () => [] });
   if (withCommands) {
     ctx.provide("commands", { register: (def) => { captured.commands.push(def); return () => {}; } });

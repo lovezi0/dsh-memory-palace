@@ -122,7 +122,9 @@ export function registerApi({ ctx, getSettingsFace }) {
         kind: "prefix",
         path: "/memory-palace/api",
         handler: async (req, res) => {
-          const fence = (r) => apiIsTrustedRequest(r, ctx.webRuntime?.trustedHosts ?? []);
+          // 信任权威读自 webStartup（dsh 0.2.1-alpha.1 起取代 webRuntime；
+          // 值为本次调用的 --trusted-host 清单）。信任栅栏本体见 apiIsTrustedRequest。
+          const fence = (r) => apiIsTrustedRequest(r, ctx.webStartup?.trustedHosts ?? []);
           if (!fence(req)) {
             apiWriteJson(res, 403, { ok: false, error: { code: "forbidden", message: "forbidden" } });
             return;

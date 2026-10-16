@@ -2,7 +2,7 @@
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.2.0-rc.1](https://img.shields.io/badge/DeepSeek%20Harness-0.2.0--rc.1-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness) [![Desktop: supported](https://img.shields.io/badge/Desktop-supported-success.svg?labelColor=4D6BFE)](#安装)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.2.1-alpha.1](https://img.shields.io/badge/DeepSeek%20Harness-0.2.1--alpha.1-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness) [![Desktop: supported](https://img.shields.io/badge/Desktop-supported-success.svg?labelColor=4D6BFE)](#安装)
 
 ## 特性
 
@@ -120,13 +120,15 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.8.1**
+    - **1.8.1-alpha.4**
+        - 💪跟随官方移除 webRuntime 更改为 webStartup
+        - 💪适配deepseek harness 0.2.1-alpha.1
     - **1.8.1-alpha.3**
-    - **1.8.1-alpha.2**
-            - 💥移除「蒸馏项目记忆」手动功能
-            - 💥移除 session header 记忆按钮
-            - 🔥增加会话命令 memory_reorganize *全量重整项目记忆*
-            - 💪优化 memory_write 工具 prompt
-            - 🐛修复 memory_reorganize 工具读取历史工作日志的问题
+        - 💥移除「蒸馏项目记忆」手动功能
+        - 💥移除 session header 记忆按钮
+        - 🔥增加会话命令 memory_reorganize *全量重整项目记忆*
+        - 💪优化 memory_write 工具 prompt
+        - 🐛修复 memory_reorganize 工具读取历史工作日志的问题
     - **1.8.1-alpha.1**
         - 💥移除「蒸馏会话」手动功能
         - 💥配置项 summaryMaxTokens / feedbackEnabled 删除，旧值静默失效
