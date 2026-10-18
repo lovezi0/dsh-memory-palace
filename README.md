@@ -121,6 +121,8 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.8.2**
+    - 💪内置prompt剪枝优化
 - **1.8.1**
     - 更改插件兼容性定义为 engines.dsh
     - npm publish v1.8.1

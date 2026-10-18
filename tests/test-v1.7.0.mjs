@@ -96,6 +96,10 @@ console.log("\n[特性4] SUBAGENT_SYSTEM 格式规范");
     assert.ok(sys.includes("200 字长句"));
   });
   check("保留原有环境边界禁令", () => assert.ok(sys.includes("run_code 等工具均不存在")));
+  check("判定段含「不改」显式出口", () => {
+    assert.ok(sys.includes("零操作收尾也是合格产出"), "应明示零操作收尾合格");
+    assert.ok(sys.includes("已在今日日志且无旧条目需要标删"), "判定段应并入全等价情形");
+  });
 }
 
 // ============ 特性 2：路径优先级 ============

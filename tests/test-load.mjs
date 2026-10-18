@@ -525,6 +525,8 @@ console.log("[V] cold start → write-role instructions still injected");
     "[V] 分工指令含 MEMORY.md 维护工具指引");
   assert(t.includes("memory_note") && t.includes("memory_read"),
     "[V] intro 含 memory_note / memory_read 工具指引");
+  assert(/强化[\s\S]*修正\s*\/\s*推翻[\s\S]*补充/.test(t) && t.includes("不写就是正确的沉淀"),
+    "[V] 分工指令含变更归类三分法与「不改」出口");
 }
 
 // ---------- 场景 W：turn/end → 记忆子代理接线+ 口径保留 ----------
