@@ -15,12 +15,12 @@
 
 | 用途 | 名称 | 真源位置 | 注入 / 调用时机 |
 |---|---|---|---|
-| 系统提示词注入 | 基础说明 + 记忆分工说明（`HYBRID_PROACTIVE`） | `src/index.mjs` `text()` | 每轮 system prompt 拼接注入 |
+| 系统提示词注入 | 总述 + `[记忆文件]` + `[读取]` + `[边界]` | `src/index.mjs` `text()` | 每轮 system prompt 拼接注入 |
 | **记忆正文投影** | **用户级/项目级 MEMORY.md + 今日日志** | **`src/projection.mjs`** | **每 step 经 `agent/pre-step` 注入为常驻 user 消息（不在 section 内）** |
 | 路径简写硬约束 | `antiMangle` | `src/index.mjs` | 随 system prompt 注入（始终） |
 | plan 模式禁写提示 | `planNote` | `src/index.mjs` | 仅 plan 模式激活时追加 |
 | 会话命令 `/memory_reorganize` 内置提示 | `REORG_COMMAND_PROMPT` | `src/common/prompts.mjs` | 用户手打 `/memory_reorganize`；handler 经 `agent.steer` 作为用户消息发送 |
-| **记忆分工说明（段二）** | **`HYBRID_PROACTIVE`** | **`src/hybrid/prompts.mjs`** | **每轮 system prompt 段二（随 `text()` 注入）** |
+| **写入分工（段三）** | **`HYBRID_PROACTIVE`** | **`src/hybrid/prompts.mjs`** | **每轮 system prompt（随 `text()` 注入）** |
 | **记忆子代理 system prompt** | **`SUBAGENT_SYSTEM()`** | **`src/hybrid/prompts.mjs`** | **每轮 turn/end 触发 `runMemorySubagent`** |
 
 > v1.8.0：`SCENE_KEYWORDS`（防闲聊闸门关键词）与 `smart` 模式的自动摘要入口 `summarizeTurn` 已随模式一并删除。
@@ -31,45 +31,54 @@
 
 ## 二、系统提示词注入（基础说明 + 记忆分工）
 
-真源：`src/index.mjs` 的 `systemPrompt.section.text()` 闭包。返回内容由「基础说明 + 路径简写 + 记忆分工指令（`HYBRID_PROACTIVE`） + plan 提示 + **自定义指令（v1.7.1）**」拼接（**v1.7.1 起已无任何动态块**）。
+真源：`src/index.mjs` 的 `systemPrompt.section.text()` 闭包。返回内容为五个块按序以空行拼接：**总述 → `[记忆文件]` → `[读取]` → `[写入分工]`（`HYBRID_PROACTIVE`，来自 `src/hybrid/prompts.mjs`） → `[边界]`**，其后追加 plan 提示与 **自定义指令（v1.7.1）**（**v1.7.1 起已无任何动态块**）。
 
-> **section 不含任何易变内容。** 用户级/项目级 `MEMORY.md` 与**今日工作日志**均经 E 投影（`src/projection.mjs`）注入为常驻 user 消息（每个 step 可见），见 §2.6。section 只含「常量指令（intro + 分工说明 + 用户自定义指令）」。分流依据是**内容是否恒定**：恒定 → 留 section（system prompt 位于序列最前，内容恒定才不毁前缀缓存）；易变 → 走投影追加到历史尾部、按**文件身份**各只注一次。
+> **section 不含任何易变内容。** 用户级/项目级 `MEMORY.md` 与**今日工作日志**均经 E 投影（`src/projection.mjs`）注入为常驻 user 消息（每个 step 可见），见 §2.7。section 只含「常量指令（五块 + plan 提示 + 用户自定义指令）」。分流依据是**内容是否恒定**：恒定 → 留 section（system prompt 位于序列最前，内容恒定才不毁前缀缓存）；易变 → 走投影追加到历史尾部、按**文件身份**各只注一次。
 
-### 2.1 基础说明（两种形态，按是否桥接 buddy 目录切换）
-- **已桥接**（`paths.buddyDirs().length > 0`）：告知 agent 当前项目存在 WorkBuddy/CodeBuddy 记忆目录，本插件直接读写这些目录，不再单独创建 `.deepseek-harness/memory/`。
-- **未桥接**：告知记忆位于 `~/.deepseek-harness/MEMORY.md` 及项目 `.deepseek-harness/MEMORY.md`（长期）+ `.deepseek-harness/memory/`（每日日志）。
-- 两版均强调：写入用 `memory_note`（项目级）/ `memory_note_user`（用户级），读取用 `memory_read`（`scope` 默认 `memory` = 用户级 + 项目级，要日志须显式传 `today`/`yesterday`/`daily`/`all`；**禁止手动 glob/read 记忆文件**）。
-- **v1.7.1 快照提示**：两版 intro 均追加「上下文中的记忆是**会话起始快照**，不随记忆文件之后的更新自动刷新；需要以当前状态为依据时（改记忆前、据记忆作答前）用 `memory_read` 重读」——因为投影按文件身份只注入一次（见 `src/projection.mjs` 与 DEVELOPMENT.md「记忆注入通道」）。
+### 2.1 记忆总述与 `[记忆文件]`（两种形态，按是否桥接 buddy 目录切换）
+- **总述**（一句）：记忆真源是 Markdown 文件而非数据库，分三层、读写权限不同。
+- **`[记忆文件]`** 三条，每条自带权限：用户级 MEMORY.md / 项目级 MEMORY.md **可写**（`memory_note_user` / `memory_note`，或 `memory_write` / `memory_update_section` 的对应 `scope`）；每日日志由记忆子代理每轮自动维护，agent **只读**——不写、不改文件头、不重排。
+- **两形态差异只在路径与桥接说明**：已桥接（`paths.buddyDirs().length > 0`）→ 只给角色名 + 「当前项目已存在 WorkBuddy/CodeBuddy 记忆目录…不再单独创建 `.deepseek-harness/memory/`」；未桥接 → 三条分别带 `~/.deepseek-harness/MEMORY.md` / `.deepseek-harness/MEMORY.md`（项目根下）/ `.deepseek-harness/memory/YYYY-MM-DD.md`（项目根下）。
 
-### 2.2 路径简写硬约束 `antiMangle`
-> 提及记忆文件路径时一律用 `~` 简写（如 `~/.deepseek-harness/MEMORY.md`），不要逐字拼写绝对路径——你转述绝对路径容易漏掉目录分隔符。
+### 2.2 `[读取]`（五条标签式，语义逐字保留）
 
-真机踩坑：AI 转述绝对路径易出现缺分隔符（如 `~/.deepseek-harness` 被拼成 `~.deepseek-harness`），故强制喂 `~` 简写。
+每条 `标签：内容`，与 `[记忆文件]` 同构：
+- `快照`：上下文里的记忆是**会话起始快照**，不随记忆文件之后的更新刷新。
+- `必须重读`：需要**当前**磁盘状态时**必须** `memory_read` 重读（改记忆前、据记忆作答前、用户问「现在 / 最新」时）。
+- `不必重读`：上下文里已有、且不涉时效的，不必再读——不要为"确认一下"重复调用。
+- `取日志`：`scope` 默认 `'memory'` = 用户级 + 项目级 MEMORY.md；要日志才显式传 `today` / `daily` / `all`。
+- `禁止`：手动 glob/read 记忆文件；看不到的内容不要编造。
 
-### 2.3 记忆分工指令 `proactive`（v1.8.0 起恒为 `HYBRID_PROACTIVE`）
+> **两条纪律**：① 顺序刻意——快照先于指令、"必须"先于"不必"，负向祈使在模型侧更"粘"，不能让它压过正向；② **重构只改排版、不动语义**——工具名（`memory_read`）、条件、分支、举例必须逐字保留。曾有一次把「必须 `memory_read` 重读」压成「必须重读」、并删掉三个分支，属事故级改动。
+
+### 2.3 `[边界]`（原 `antiMangle` 并入，两条 `- ` 条目）
+- `- 记忆是补充，不替代回答与交付：不要把记忆原文直接当答案，也不要用读记忆代替动手核实。`
+- `- 提及记忆文件路径时一律用 ~ 简写…`：提及记忆文件路径时不要逐字拼写绝对路径——真机踩坑：AI 转述绝对路径易缺分隔符（`~/.deepseek-harness` 被拼成 `~.deepseek-harness`）。
+
+### 2.4 写入分工 `[写入分工]`（v1.8.0 起恒为 `HYBRID_PROACTIVE`）
 | 分支 | 注入文案 | 意图 |
 |---|---|---|
-| **（唯一）** | 「记忆分工说明」`HYBRID_PROACTIVE`：①日志由子代理每轮自动维护（含去重标删），agent 无需记录过程；②MEMORY.md **只在「下个会话不做就会做错」时才写**，写前自检（是否在解释代码怎么实现？去掉行号/报错全文/临时链接后还立得住吗？）→ **再对已有记忆归类（强化→不写或并入原句 / 修正推翻→整章节精确替换或标删 / 补充→追加；三类都不属→不写就是正确的沉淀）**、**优先 `memory_update_section` 合并，其次 `memory_write` 追加**；③项目级仅双门禁满足时可 `memory_reorganize` 全量重整（**只允许落盘一次**），否则不得反复尝试；④用户级禁止重整 | 日志/长期记忆职责分离，agent 主写 MEMORY.md，且**只记 durable 结论、不记过程流水** |
+| **（唯一）** | `[写入分工]`（`HYBRID_PROACTIVE`）①日志由子代理每轮自动维护（含去重标删），agent 无需记录过程；②MEMORY.md **只在「下个会话不做就会做错」时才写**，写前自检（是否在解释代码怎么实现？去掉行号/报错全文/临时链接后还立得住吗？）→ **再对已有记忆归类（强化→不写或并入原句 / 修正推翻→整章节精确替换或标删 / 补充→追加；三类都不属→不写就是正确的沉淀）**、**优先 `memory_update_section` 合并，其次 `memory_write` 追加**；③项目级仅双门禁满足时可 `memory_reorganize` 全量重整（**只允许落盘一次**），否则不得反复尝试；④用户级禁止重整；⑤不写密钥/token/密码/个人身份信息，**除非用户明确要求，否则不记录任何凭据**，确需记录只写「在哪个配置项 / 文件读取」 | 日志/长期记忆职责分离，agent 主写 MEMORY.md，且**只记 durable 结论、不记过程流水** |
 
 > v1.8.0：原 `plugin`（记忆公民指令）与 `smart`（记忆自动维护说明）两个分支已删除，`proactive` 直接取 `HYBRID_PROACTIVE`。
-> **注意**：`HYBRID_PROACTIVE` 只讲分工、不含工具清单——工具指引（`memory_note` / `memory_read`）在 §2.1 的 intro 里，不可误删。
+> **注意**：`HYBRID_PROACTIVE` 只讲分工、不含工具清单——工具指引（`memory_note` / `memory_read`）在 §2.1 的 `[记忆文件]` 与 §2.2 的 `[读取]` 里，不可误删。
 
 关键约束：`text()` 必须**始终**返回非空（即便无记忆也要注入指令），否则 agent 不知记忆系统存在 → 永不记 → 死循环。
 
-### 2.4 plan 模式禁写提示 `planNote`
+### 2.5 plan 模式禁写提示 `planNote`
 仅当**当前会话**处于 plan 模式时追加：「当前处于 plan 模式，不要调用 memory_note / memory_note_user 写入记忆，也不要请求删除记忆（读取用 memory_read）。」属于软提示，网关物理兜底仍生效。
 
 > 判定走 `planModeOf(state, context.agent.session)`（`common/planmode.mjs`）：宿主 plan 模式是**会话级**状态（`session.append('plan/mode')`），故按会话判定——别的会话进 plan 不得往本会话 prompt 里塞这条提示。
 
-### 2.5 自定义指令 `customInstructions`（v1.7.1 特性3）
+### 2.6 自定义指令 `customInstructions`（v1.7.1 特性3）
 
-真源：设置页「自定义指令」板块（config 字段 `customInstructions`）。**非空**（trim 后）时以 **`[用户自定义指令]`** 为前缀、追加在「记忆分工指令 + plan 提示」之后 —— 即 system prompt 里呈现为「记忆插件 prompt → 记忆分工 prompt → **[用户自定义指令] …**」的顺序。前缀与 `[记忆公民指令]` / `[plan 模式]` 同风格，便于模型识别段落来源。
+真源：设置页「自定义指令」板块（config 字段 `customInstructions`）。**非空**（trim 后）时以 **`[用户自定义指令]`** 为前缀、追加在「五块 + plan 提示」之后 —— 即 system prompt 里呈现为「总述 → `[记忆文件]` → `[读取]` → `[写入分工]` → `[边界]` →（plan 模式下）`[plan 模式]` → **[用户自定义指令] …**」的顺序。前缀与 `[plan 模式]` 同风格，便于模型识别段落来源。
 
 - 它是**恒定内容**（用户配置一次不变），故留在 section 而非走投影 —— 与分流依据一致，零缓存成本。
 - 留空或纯空白 → 不注入，`text()` 原样返回 `introFull`（不留空段、不留空白）。
 - 对全部会话生效；不进 E 投影、不参与投影身份去重。
 
-### 2.6 记忆正文投影（非 prompt，但决定模型可见内容）
+### 2.7 记忆正文投影（非 prompt，但决定模型可见内容）
 
 真源：`src/projection.mjs`。用户级与项目级 `MEMORY.md` 经 `agent/pre-step` 投影为**两条独立的常驻 user 消息**：
 
@@ -85,13 +94,23 @@
 
 真源：`src/hybrid/prompts.mjs`。
 
-### 4.1 分工说明 `HYBRID_PROACTIVE`（注入段二）
+### 4.1 写入分工 `HYBRID_PROACTIVE`（注入 `[写入分工]` 块）
 
-注入 system prompt 的「段二」（v1.8.0 起唯一形态；原 smart 的「无需主动调用」与 plugin 的「记忆公民指令」已删除）。四点分工：
-1. 日志由子代理每轮自动维护（含去重：重复/过时条目删除线标记），agent 无需重复记录过程性信息；
-2. MEMORY.md（项目/用户）由 agent 主动维护，但**只在「下个会话不做这条就会做错 / 返工 / 重踩坑」时才写**（记关键决策、踩坑修复、用户偏好等 durable 结论，不记过程流水或一次性临时状态）。写前自检：这条是不是在解释「代码怎么实现」？去掉行号 / 报错全文 / 临时链接后还立得住吗？**再对已有记忆归类：强化（只是佐证已有条目）→ 不写或并入原句；修正 / 推翻（已有条目失效）→ 整章节精确替换或标删（仅叙述旧→新转变过程、而 MEMORY.md 已含新结论的算强化）；补充（已有体系内的新维度）→ 追加；三类都不属 → 不写就是正确的沉淀。** **优先用 `memory_update_section` 合并 / 改写已有条目，其次才 `memory_write` 追加**；一次只记一个事实；
-3. 项目级 MEMORY.md 仅「超出注入预算 且 距上次重整 ≥ 冷却期」双条件同时满足才可 `memory_reorganize` 全量重整；重整**只允许落盘一次**，重整前先读文件与日志对照、勿丢关键信息；门禁不满足时**不要反复尝试**（未超预算 → `memory_update_section` 日常维护；冷却期内 → 停止并如实报告）；
-4. 用户级 MEMORY.md 禁止全量重整。
+注入 system prompt 的 `[写入分工]` 块（v1.8.0 起唯一形态；原 smart 的「无需主动调用」与 plugin 的「记忆公民指令」已删除）。九个一级条目 + 六个二级条目，统一 `标签：内容` 语法：
+
+- `日志不归你`：子代理每轮自动提炼摘要写今日日志（含去重标删）；agent 无需调用工具记录过程、不复述。
+- `归属`：长期记忆 MEMORY.md（项目级与用户级）由 agent 主动维护。
+- `写 MEMORY.md 的时机`（三个二级）：**必写**=用户明确要求「记住」（按归属选层级：跨项目→用户级 / 本项目→项目级）；**才写**=只在「不做就会做错 / 返工 / 重踩坑」时（用户当场声明的约定或偏好、关键决策、踩坑修复等 durable 结论）；**不写**=过程流水或一次性临时状态。
+- `写前自检`：是否在解释「代码怎么实现」；去掉行号 / 报错全文 / 临时链接后还立得住吗。
+- `已有记忆归类`：**强化**→不写或并入原句；**修正 / 推翻**→整章节精确替换或标删（只叙述旧→新、而文件已含新结论的算强化）；**补充**→追加；**三类都不属**→不写就是正确的沉淀。
+- `怎么写`：优先 `memory_update_section` 合并 / 改写，其次 `memory_write` 追加（章节不存在自动新建）；一次一事实；绝不手写覆盖。
+- `全量重整`：仅「超预算 且 距上次重整 ≥ 冷却期」两条件同时满足可 `memory_reorganize`，只允许落盘一次。
+- `重整取材`：必须用文件读取工具直接读 MEMORY.md 与 `memory/YYYY-MM-DD.md`（含更早日期）——`memory_read` 被禁用，它只覆盖近三天。
+- `门禁不过`：不要反复尝试——未超预算→`memory_update_section` 日常维护；冷却期内→停止并如实报告，不得换工具凑数。
+- `用户级`：禁止全量重整，只允许增量写入与整章节精确替换。
+- `密级`：不写密钥 / token / 密码 / 个人身份信息——除非用户明确要求，否则不记录任何凭据。
+
+> **两条同源规则**：① 排版与日志条目形状同源（一条一事、`标签：内容`、超长拆子项），prompt 自己也不能是"一堵墙"；② **重构不得压缩语义**——工具名、条件、分支、举例逐字保留，改完逐句 diff 对照。
 
 ### 4.2 记忆子代理 system prompt `SUBAGENT_SYSTEM()`
 
@@ -104,9 +123,11 @@ hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.m
   - 只能通过 `log_write_ops` 写，禁止重写整文件；三种 op：新增章节 / 章节内追加（upsert，不强行匹配现有章节）/ 标记删除（删除线墓碑，非物理删除）；
   - 去重是子代理职责：回喂日志中已存在的结论禁止重复追加，语义重复/矛盾用 `mark_delete` 标记过时条目；
   - 条目格式：一行一条、结论开头 + 关键细节、客观第三人称、禁止标签与对话体。
+  - 不记一次性信息：搜索结果 / 临时路径（临时目录、一次性生成物）/ 工具报错原文；踩坑只记「什么条件下会失败 + 怎么修」，可复用入口路径照常记。
 - **格式规范段（7 正 + 3 反）**——旧产物是「一堵墙」（单章节 + 零嵌套 + 零加粗 + 200 字长句），故把格式细则写进 prompt：
   - 正面：①文件头由插件维护、子代理不写；②一主题一 `##` 章节、同主题超 3 条再拆 `###`；③一条一事实 ≤120 字，超长拆父项 + 两空格缩进子项（**缩进必须模型自己写**，`upsertSectionText` 只原样保留中间换行与缩进）；④关键结论/决策/纠错 `**加粗**`、重要约束标 `（重要）`；⑤行内分组 `**结论**：` / `**待办**：` / `**约束**：` / `**产出**：` / `**用户约定**：`；⑥允许一句「用户意图/反馈」作语境，禁止流水账；⑦可复现命令/脚本用代码块。
   - 反模式：过程流水（"用户提出…我已改…"）、自我过程表述（"我搜索了 A/B/C"）、把多个结论塞进 200 字长句。
+- **密级段**：不写密钥 / token / 密码 / 个人身份信息；**除非用户明确要求，否则不存储任何凭据**——需要时只记「在哪个配置项 / 文件读取」。
 - **失败语义**：超 6 轮 / 超时 `summaryTimeoutMs` / 模型不支持 tools → **本轮放弃、不降级 `writeLightEntry`**（无格式原文会破坏日志章节化结构）；断点不推进，下一次 turn/end 子代理自动补蒸。
 - **环境边界段**：本环境不是代码执行环境，`run_code` 等工具均不存在；子代理只能调用 `log_write_ops` / `log_read_section`，不得模仿上文出现过的任何工具调用。
 - **输入去噪**（非 prompt 但影响子代理可见内容）：`projectTurnMessages` 按 `source.kind` 排除注入类消息（`agent-instructions` / `plugin` / `skill-catalog` 等），只喂真实用户对话 + assistant/tool 消息。实测单轮输入 6967 → 3849 字符（−44.8%）。
@@ -128,6 +149,7 @@ hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.m
 - **禁一次性过程**（报错全文 / 命令输出 / 临时 URL）。
 - **路径**只写可复用入口（目录、配置文件名、命令）；**URL** 只留下次必须照填的基址形态。
 - 分层：**决策层**（要不要写 / 优先合并 / 写前查重）在 `HYBRID_PROACTIVE`（§4.1），**形状层**在 description —— 两层不重复同一套规则。
+- **显式触发句**：`memory_note` / `memory_note_user` 的 description 各自补一句 `or when the user explicitly asks you to remember it`——模型做写入决策时**读的是 description**，只写进 system prompt 会打对折（用户说"记住这个"时的漏写就是这么来的）。两处口径一致：用户级那句额外限定 `not tied to this project`。
 
 > v1.8.1 同时**移除**两类有害措辞：① 旧 description 的 "then key details: commands/paths/numbers"（**鼓励塞实现细节**）；② 门禁失败时的 "use memory_update_section instead" 与「请用 memory_update_section 做章节级修正」（**把 agent 推向绕道路径**——实测中 agent 正是照此做了 13 次章节级暴力删改）。拦截消息只表达「停止 + 上报」，不给替代路径。
 
