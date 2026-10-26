@@ -88,14 +88,32 @@ export function registerHybridTools({ ctx, getConfig, paths, state }) {
   }
 
   // 写入工具返回附一行体量回显（**仅回显、不拦截**），让 agent 具备体量感。
+  // 超预算时追加「超出字符数 + 重整门禁状态」指引，避免 agent 自行多轮精简替换凑数：
+  // - project 已冷却（含从未重整）→ 建议走 memory_reorganize 全量重整（只允许落盘一次）；
+  // - project 冷却期内 → 明示项目记忆暂时不可压缩、超预算写入已认可；
+  // - user 级无全量重整机制 → 同样明示超预算写入已认可。
   // 预算按 scope 取：project → workspaceBudgetChars；user → userBudgetChars
   // （memory_write / memory_update_section 都有两个 scope，写用户级时用 workspace 会算错倍率）。
   function sizeLine(scope, file, c) {
     try {
-      const size = readMdSync(file).length;
+      const md = readMdSync(file);
+      const size = md.length;
       const budget = scope === "user" ? (c.userBudgetChars || 8000) : (c.workspaceBudgetChars || 6000);
       const ratio = budget > 0 ? (size / budget).toFixed(2) : "0.00";
-      return ` 当前 ${size}/${budget} 字符（${ratio}×）`;
+      const base = ` 当前 ${size}/${budget} 字符（${ratio}×）`;
+      if (budget <= 0 || size <= budget) return base;
+      const over = size - budget;
+      if (scope === "user") {
+        return `${base}，超出 ${over} 字符；用户级无全量重整机制——超预算写入已认可，无需重复尝试精简替换。`;
+      }
+      const last = readLastReorg(md);
+      const cooldownMs = (c.reorgCooldownDays ?? 7) * 86400000;
+      const lastNote = last ? `上次重整 ${new Date(last).toLocaleString()}` : "从未重整";
+      if (Date.now() - last >= cooldownMs) {
+        return `${base}，超出 ${over} 字符；重整门禁已满足（${lastNote}）——如需减量请调用 memory_reorganize 全量重整（只允许落盘一次），无需反复精简替换凑数。`;
+      }
+      const remainDays = Math.ceil((last + cooldownMs - Date.now()) / 86400000);
+      return `${base}，超出 ${over} 字符；重整冷却剩约 ${remainDays} 天（${lastNote}）——项目记忆暂时不可压缩：超预算写入已认可，无需重复尝试精简替换。`;
     } catch {
       return "";
     }
@@ -171,7 +189,7 @@ export function registerHybridTools({ ctx, getConfig, paths, state }) {
             // 修复：entry 经 flattenEntry 扁平化为单行——含内嵌换行/标题行
             // 时不再原样落盘破坏结构，message 明示合并，不静默撒谎。
             const flatNote = flattened ? "（entry 含多行，已合并为单行）" : "";
-          // 体量回显（仅提示，不拦截）——让 agent 具备体量感，超预算时自然倾向合并或重整。
+          // 体量回显（仅提示，不拦截）——超预算时由 sizeLine 附「超出字符数 + 重整门禁状态」指引。
           const scopeKey = args.scope === "user" ? "user" : "project";
           const sizeNote = wrote > 0 && files[0] ? sizeLine(scopeKey, files[0], c) : "";
           return {

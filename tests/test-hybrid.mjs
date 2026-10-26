@@ -553,6 +553,44 @@ section("③c 写入规范（形状层）+ 守卫文案 + size 回显");
   assert.ok(/当前 \d+\/50 字符（[\d.]+×）/.test(r2.message), `user 回显应含「当前 N/50 字符（x×）」：${r2.message}`);
   ok("size 回显：按 scope 取预算（project 100 / user 50）");
 
+  // 超预算回显指引：附「超出字符数 + 重整门禁状态」——已冷却建议 memory_reorganize；
+  // 冷却期内明示暂时不可压缩 + 超预算写入已认可；用户级无重整同样认可。
+  {
+    const overFile = join(tmp, ".deepseek-harness", "MEMORY.md");
+    const overBody = "## 环境必知\n" + "- 条目一二三四五六七八九十\n".repeat(8);
+    const e2 = { agent: { session: { id: "s-size-over", header: { cwd: tmp } } } };
+
+    // 已冷却（文件无重整时间戳 → 视为从未重整、冷却已过）：建议走 memory_reorganize
+    writeFileSync(overFile, overBody, "utf8");
+    const c1 = await wDef.execute({ scope: "project", section: "环境必知", entry: "追条甲" }, e2);
+    assert.ok(c1.ok, "超预算写入应照常落盘（仅回显不拦截）");
+    assert.ok(/超出 \d+ 字符/.test(c1.message), `已冷却回显应含「超出 N 字符」：${c1.message}`);
+    assert.ok(/重整门禁已满足/.test(c1.message), `已冷却回显应含门禁状态：${c1.message}`);
+    assert.ok(/memory_reorganize/.test(c1.message), `已冷却应建议走全量重整：${c1.message}`);
+    assert.ok(!/无需重复尝试精简替换/.test(c1.message), "已冷却分支不应宣告「无需精简替换」");
+
+    // 冷却期内（文件尾带当日重整时间戳）：明示暂时不可压缩 + 超预算已认可，不再引导 reorganize
+    const now2 = new Date();
+    const iso2 = `${now2.getFullYear()}-${p2(now2.getMonth() + 1)}-${p2(now2.getDate())}T${p2(now2.getHours())}:${p2(now2.getMinutes())}:${p2(now2.getSeconds())}`;
+    writeFileSync(overFile, `${overBody}\n<!-- memory-palace:last-reorg:${iso2} -->\n`, "utf8");
+    const c2 = await wDef.execute({ scope: "project", section: "环境必知", entry: "追条乙" }, e2);
+    assert.ok(c2.ok, "冷却期内写入应照常落盘（仅回显不拦截）");
+    assert.ok(/重整冷却剩约 \d+ 天/.test(c2.message), `冷却期内应报剩余天数：${c2.message}`);
+    assert.ok(/项目记忆暂时不可压缩/.test(c2.message), `冷却期内应明示不可压缩：${c2.message}`);
+    assert.ok(/超预算写入已认可，无需重复尝试精简替换/.test(c2.message), `冷却期内应认可超预算写入：${c2.message}`);
+    assert.ok(!/memory_reorganize/.test(c2.message), `冷却期内不得引导 reorganize：${c2.message}`);
+
+    // 用户级超预算（无重整机制）：同样认可、不引导 reorganize
+    writeFileSync(join(tmp, "USER-MEMORY.md"), "## 偏好\n" + "- 偏好条目一二三四五六七八九十\n".repeat(5), "utf8");
+    const c3 = await wDef.execute({ scope: "user", section: "偏好", entry: "追条丙" }, e2);
+    assert.ok(c3.ok, "用户级超预算写入应照常落盘");
+    assert.ok(/超出 \d+ 字符/.test(c3.message), `用户级回显应含「超出 N 字符」：${c3.message}`);
+    assert.ok(/用户级无全量重整机制/.test(c3.message), `用户级应明示无重整机制：${c3.message}`);
+    assert.ok(/超预算写入已认可，无需重复尝试精简替换/.test(c3.message), `用户级应认可超预算写入：${c3.message}`);
+    assert.ok(!/memory_reorganize/.test(c3.message), `用户级不得引导 reorganize：${c3.message}`);
+    ok("超预算回显指引：已冷却→reorganize / 冷却期内→已认可 / 用户级→已认可");
+  }
+
   // 兜底：cfg 缺 userBudgetChars 时须回落 schema 默认 8000（不是 之前的旧值 4000）
   const defs2 = [];
   const cfgNoUser = () => ({

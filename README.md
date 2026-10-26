@@ -122,6 +122,8 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.8.3**
+    - **1.8.3-alpha.2**
+        - 💪超预算回显附重整门禁指引，避免 agent 多轮精简替换凑数
     - **1.8.3-alpha.1**
         - 💪调整内置system prompt
 - **1.8.2**
