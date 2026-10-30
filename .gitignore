@@ -34,3 +34,5 @@ AGENTS.md
 
 # DSH 契约追踪（含本机路径与版本基线，本地专用，不进仓库）
 DSH-CONTRACT-TRACKING.md
+
+release nodes/
