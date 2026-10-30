@@ -48,6 +48,7 @@ const CLIENT_PARTS = [
   "20-common.js",
   "30-settings-section.js",
   "40-sparkle.js",
+  "60-command-alias.js",
   "90-tail.js",
 ];
 const clientDir = join(src, "client");

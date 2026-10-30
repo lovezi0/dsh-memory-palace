@@ -12,14 +12,15 @@ dsh-memory-palace/
 │   │   ├── paths.mjs          #   createPaths 工厂（buddyDirs / writeDirs / memoryFileOf，cwd 参数化）
 │   │   ├── records.mjs        #   appendLineDedup / findMatches / removeLineByMatch / recentLogDates（纯函数）
 │   │   ├── sections.mjs       #   章节纯函数：parse/locate/append/upsert/create/replace/markEntryDeleted（hybrid 用）
-│   │   └── logger.mjs         #   统一日志落盘：createLogger（profile 目录 .memory-palace/logs/<sid>/{info,debug}.log，按级别分流）
+│   │   ├── logger.mjs         #   统一日志落盘：createLogger（profile 目录 .memory-palace/logs/<sid>/{info,debug}.log，按级别分流）
+│   │   └── user-commands.mjs  #   自定义指令真源：createUserCommands（<profile>/.memory-palace/user-commands.md，同步读 + mtime 缓存 + 原子写）
 │   ├── hybrid/                # 记忆子代理独立模块（v1.8.0 起为唯一写入路径，由 index.mjs 无条件装配）
 │   │   ├── index.mjs          #   模块入口 registerHybrid（注册工具 + 闸门，返回 runMemorySubagent）
 │   │   ├── prompts.mjs        #   HYBRID_PROACTIVE（注入 [写入分工] 块）/ SUBAGENT_SYSTEM（子代理 system prompt）
 │   │   ├── subagent.mjs       #   记忆子代理：ctx.llm.stream + tools 自建工具循环（log_read_section/log_write_ops）
 │   │   └── tools.mjs          #   memory_write / memory_update_section / memory_reorganize + pre-execute 闸门
 │   ├── tools.mjs              # 四个记忆工具（memory_note / _user / _read / _delete）+ pre-execute 删除确认闸门
-│   ├── api.mjs                # /memory-palace/api route（设置读写，HTTP trust-fence）
+│   ├── api.mjs                # /memory-palace/api route（设置读写 + 自定义指令读写，HTTP trust-fence）
 │   ├── projection.mjs         # E 投影：agent/pre-step 把记忆正文/今日日志注为常驻 user 消息（可跳首步）
 │   └── client/                # 前端 client 源码（build 按序零依赖拼接为 lib/client.js 单 bundle）
 │       ├── 00-head.js         #   IIFE 头 + react / NS 初始化
@@ -27,6 +28,7 @@ dsh-memory-palace/
 │       ├── 20-common.js       #   公共助手（fetch 封装等）
 │       ├── 30-settings-section.js  # 设置页「记忆」面板（v1.7.1 起为折叠卡片 + 自定义指令板块）
 │       ├── 40-sparkle.js      #   SPARKLE_SVG 图标常量 + twinkle keyframes（设置页 nav 星标用）
+│       ├── 60-command-alias.js #  中文会话命令 /记忆重整（commandUi contribution）+ 命令失败 composer notice
 │       └── 90-tail.js         #   apply 装配 + settings.section 插槽注册
 ├── scripts/
 │   └── build.mjs              # 构建：服务端递归复制 + index.js 入口重命名 + client 按序拼接（零外部依赖）
@@ -149,8 +151,10 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 | **恒定指令**：记忆插件 intro + 记忆分工 prompt + 用户自定义指令 | **`systemPrompt.section`**：每步同步注入 | 内容恒定 → system prompt 不抖动 → **前缀缓存永久有效**（零成本） |
 | **易变内容**：用户级 / 项目级 `MEMORY.md`、今日工作日志 | **E 投影**（`src/projection.mjs`）：`agent/pre-step` 投影为常驻 user 消息 | 追加在历史尾部、按**文件身份**各只注一次 → 不触碰已有前缀 |
 
-自定义指令（`customInstructions`，v1.7.1 特性3）由用户在设置页「自定义指令」板块配置，拼接在**记忆分工 prompt 之后** ——
+自定义指令（v1.7.1 特性3；v1.8.4 起真源改为 **`<profile>/.memory-palace/user-commands.md`**，配置项 `customInstructions` 已摘除、不读存量值）拼接在**记忆分工 prompt 之后** ——
 拼接顺序即 system prompt 里的实际排布（同一 section 内完成，`order: 50` 不变）。留空或纯空白时不注入。
+读取走 `createUserCommands(...).readSync()`：同步 stat + `mtimeMs` 缓存（section 每一步都会取，文件没变就不读盘），任何异常都吞掉并返回空串——`section.text()` 抛错会毁掉整个 turn。
+写入走自有 route `userCommands.update`（原子写：同目录 tmp → rename），设置页编辑框与手改文件共用同一真源。
 它属恒定内容，故留在 section 而非走投影 —— 与「内容是否恒定」的分流依据一致。
 
 > ⚠️ **切勿把任何「每步可能变化」的内容放回 section** —— section 位于序列**最前**，一变就让其后整段前缀作废。
@@ -237,6 +241,9 @@ $DSH_HOME/profiles/<profile>/.memory-palace/logs/<session-id>/
 用户手动触发项目记忆重整的唯一入口（原客户端「蒸馏项目记忆」按钮与其服务端蒸馏链路已在 v1.8.1 整体移除）。
 
 - **注册**：`src/index.mjs` 内 `ctx.inject(["commands"], (c) => c.effect(() => c.commands.register({...})))`。`commands` 是**可选依赖**——无命令面的部署里子 fiber 不加载，插件主体照常 ACTIVE（绝不 pending）。
+- **中文别名 `/记忆重整`（v1.8.4）**：宿主 server 命令名硬限 `^[a-z][a-z0-9_-]*$`（`packages/interaction/commands/src/index.ts:32`，解析期同限），**无法注册中文名**；而 `commandUi.register` 的 contribution **只查重名、不限字符集**——故在 `src/client/60-command-alias.js` 注册 `name: '记忆重整'` 的 action，`run` 内转发 `commands.execute('/memory_reorganize')`，服务端逻辑零分叉。菜单里中文可直接检索（`rankByName` 用 name/label），裸命令回车即认领；**带参数的中文行不认领**（宿主的 contribution 分支遇 `!bare` 直接放行）——需要补充说明时仍用 `/memory_reorganize <补充>`。CLI 无 client 面，中文别名只在 Web/Desktop 生效。
+  - 与宿主 `/模型` 的区别：`模型` 是 `/model` 的菜单 **label**（输入 `/模型` 靠菜单筛出后选中执行）；`/计划` `/目标` `/压缩` 等 6 个才是真正的手打中文 token（`builtinCommandTokens.zh`）。第三方命令两者都拿不到，只能自建 contribution。
+- **命令失败提示**：命令 outcome 只渲染成会话流里一行小字，门禁拒绝容易被当成「没反应」→ `command/executed` 事件里对 `memory_reorganize` 的 `error` 结果补一条 composer notice（`conversation.input.for(actx).notify('error', text)`，通道不可用时静默）。
 - **宿主契约**：命令注册表**自身不提交模型消息**，必须 handler 亲自提交——本插件用 `agent.steer(createUserMessage({ content:[{type:'text',text:内置提示}], source:{kind:'user'} }))` 把内置提示作为一条用户消息发给模型。命令名限 `^[a-z][a-z0-9_-]*$`；第三方命令无 i18n，中文文案只能写进 `description`。
 - **handler 门禁顺序**：`enabled` → 会话静默（`isSessionSilent`）→ plan 模式 → 有活动工作区 → `checkReorgGate`（超注入预算 且 过冷却）。任一不过**直接返回 `{kind:'error',text}`**、不产生任何消息。
 - **内置提示**（`REORG_COMMAND_PROMPT`，`src/common/prompts.mjs`）：给出项目 `MEMORY.md` 绝对路径 + 日志目录绝对路径，要求列出 `memory/*.md`（含历史日期）自行读取；**任务定义 = 两删一提一重构**（删过时 / 删重复 / 冗余提炼不丢精度 / 重构结构）；预算 `workspaceBudgetChars` **只是健康参考线、非硬指标**（严禁为达标删除仍有效信息）；**只允许落盘一次**（草稿不会自动保存、不要反复推倒重来）；**必须调用 `memory_reorganize` 工具写入**（唯一带整档备份的路径）；被拦截则**停止并报告**、不绕道；禁动用户级记忆。首行带 `REORG_MESSAGE_PREFIX`（`【项目记忆重整任务】`），用于把命令注入的消息与用户后续真实消息区分开。

@@ -1,6 +1,8 @@
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "memory-palace: dictionaries");
       const t = ctx.locale.bind(NS);
+      // 中文会话命令（/记忆重整）+ 命令失败提示（composer notice）。
+      registerCommandAlias(ctx, t);
       // 设置读写走自有 route（/memory-palace/api），不再 bind settingsScope——
       // 非 loopback 下 settingsScope persistence=memory（set() no-op），保存永不落盘。
       const controller = new MemoryPalaceController(ctx);

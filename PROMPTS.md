@@ -19,7 +19,7 @@
 | **记忆正文投影** | **用户级/项目级 MEMORY.md + 今日日志** | **`src/projection.mjs`** | **每 step 经 `agent/pre-step` 注入为常驻 user 消息（不在 section 内）** |
 | 路径简写硬约束 | `antiMangle` | `src/index.mjs` | 随 system prompt 注入（始终） |
 | plan 模式禁写提示 | `planNote` | `src/index.mjs` | 仅 plan 模式激活时追加 |
-| 会话命令 `/memory_reorganize` 内置提示 | `REORG_COMMAND_PROMPT` | `src/common/prompts.mjs` | 用户手打 `/memory_reorganize`；handler 经 `agent.steer` 作为用户消息发送 |
+| 会话命令 `/memory_reorganize`（中文别名 `/记忆重整`）内置提示 | `REORG_COMMAND_PROMPT` | `src/common/prompts.mjs` | 用户手打命令；handler 经 `agent.steer` 作为用户消息发送 |
 | **写入分工（段三）** | **`HYBRID_PROACTIVE`** | **`src/hybrid/prompts.mjs`** | **每轮 system prompt（随 `text()` 注入）** |
 | **记忆子代理 system prompt** | **`SUBAGENT_SYSTEM()`** | **`src/hybrid/prompts.mjs`** | **每轮 turn/end 触发 `runMemorySubagent`** |
 
@@ -70,12 +70,14 @@
 
 > 判定走 `planModeOf(state, context.agent.session)`（`common/planmode.mjs`）：宿主 plan 模式是**会话级**状态（`session.append('plan/mode')`），故按会话判定——别的会话进 plan 不得往本会话 prompt 里塞这条提示。
 
-### 2.6 自定义指令 `customInstructions`（v1.7.1 特性3）
+### 2.6 自定义指令 `[用户自定义指令]`（v1.7.1 特性3；v1.8.4 真源迁移）
 
-真源：设置页「自定义指令」板块（config 字段 `customInstructions`）。**非空**（trim 后）时以 **`[用户自定义指令]`** 为前缀、追加在「五块 + plan 提示」之后 —— 即 system prompt 里呈现为「总述 → `[记忆文件]` → `[读取]` → `[写入分工]` → `[边界]` →（plan 模式下）`[plan 模式]` → **[用户自定义指令] …**」的顺序。前缀与 `[plan 模式]` 同风格，便于模型识别段落来源。
+真源：**`$DSH_HOME/profiles/<profile>/.memory-palace/user-commands.md`**（`src/common/user-commands.mjs`）。配置项 `customInstructions` 已摘除——不读、不迁移，存量 profile 里的旧值静默失效。设置页「自定义指令」板块仍可编辑，读写走的都是这个文件。
+文件全文 **非空**（trim 后）时以 **`[用户自定义指令]`** 为前缀、追加在「五块 + plan 提示」之后 —— 即 system prompt 里呈现为「总述 → `[记忆文件]` → `[读取]` → `[写入分工]` → `[边界]` →（plan 模式下）`[plan 模式]` → **[用户自定义指令] …**」的顺序。前缀与 `[plan 模式]` 同风格，便于模型识别段落来源。
 
-- 它是**恒定内容**（用户配置一次不变），故留在 section 而非走投影 —— 与分流依据一致，零缓存成本。
+- 它是**恒定内容**（改文件才变），故留在 section 而非走投影 —— 与分流依据一致，零缓存成本。
 - 留空或纯空白 → 不注入，`text()` 原样返回 `introFull`（不留空段、不留空白）。
+- 读取按 `mtimeMs` 缓存（section 每步调用）；读盘异常吞掉返空串，绝不抛错毁 turn。
 - 对全部会话生效；不进 E 投影、不参与投影身份去重。
 
 ### 2.7 记忆正文投影（非 prompt，但决定模型可见内容）
@@ -155,12 +157,12 @@ hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.m
 
 ---
 
-## 五、会话命令 `/memory_reorganize` 内置提示 `REORG_COMMAND_PROMPT`
+## 五、会话命令 `/memory_reorganize`（中文别名 `/记忆重整`）内置提示 `REORG_COMMAND_PROMPT`
 
 真源：`src/common/prompts.mjs`。
 
 ### 5.1 用途与触发
-用户手打会话命令 `/memory_reorganize` 时，`src/index.mjs` 的 handler 先过门禁（`enabled` → 会话静默 → plan 模式 → 有活动工作区 → `checkReorgGate`：超注入预算 **且** 过冷却），通过后把本提示作为一条 `source.kind='user'` 的**用户消息** `agent.steer` 给模型（宿主命令注册表自身不提交消息，必须 handler 亲自提交）。提示首行固定为 `REORG_MESSAGE_PREFIX`（`【项目记忆重整任务】`），用于把命令注入的消息与用户后续真实消息区分开（后者出现即摘除重整期掩码）。
+用户手打会话命令 `/memory_reorganize`（或中文别名 `/记忆重整`——client 侧 contribution 转发，见 DEVELOPMENT.md「会话命令」）时，`src/index.mjs` 的 handler 先过门禁（`enabled` → 会话静默 → plan 模式 → 有活动工作区 → `checkReorgGate`：超注入预算 **且** 过冷却），通过后把本提示作为一条 `source.kind='user'` 的**用户消息** `agent.steer` 给模型（宿主命令注册表自身不提交消息，必须 handler 亲自提交）。提示首行固定为 `REORG_MESSAGE_PREFIX`（`【项目记忆重整任务】`），用于把命令注入的消息与用户后续真实消息区分开（后者出现即摘除重整期掩码）。
 
 ### 5.2 内容要点
 - **读取**：给出项目 `MEMORY.md` 绝对路径 + 工作日志目录绝对路径，要求列出 `memory/*.md`（含历史日期）自行读取；**明示 `memory_read` 本次已禁用**（其 scope 只到近三天，读不到更早日志）；不硬绑具体工具名（不同 profile 的 agent 工具集不同，必要时经代码执行读文件）。

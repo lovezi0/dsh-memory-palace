@@ -2,7 +2,7 @@
 
 把 WorkBuddy 的文件式记忆系统移植进 [DeepSeek Harness](https://www.deepseek.com/harness/) —— 为 Harness 提供**跨会话持久化、人类可直接编辑的 Markdown 记忆**。
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.2.1-rc.2](https://img.shields.io/badge/DeepSeek%20Harness-0.2.1--rc.2-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness) [![Desktop: supported](https://img.shields.io/badge/Desktop-supported-success.svg?labelColor=4D6BFE)](#安装)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![npm](https://img.shields.io/npm/v/dsh-memory-palace.svg?label=npm&labelColor=000000&color=ff4b01)](https://www.npmjs.com/package/dsh-memory-palace) [![DeepSeek Harness:0.2.1-rc.5](https://img.shields.io/badge/DeepSeek%20Harness-0.2.1--rc.5-success.svg?labelColor=4D6BFE)](https://github.com/deepseek-ai/deepseek-harness) [![Desktop: supported](https://img.shields.io/badge/Desktop-supported-success.svg?labelColor=4D6BFE)](#安装)
 
 ## 特性
 
@@ -10,12 +10,11 @@
 - **双层记忆**：用户级（跨项目个人偏好）+ 工作区级（项目约定），互不干扰。
 - **WorkBuddy / CodeBuddy 桥接**：项目已有对应记忆目录时直接读写，无需重复维护。
 - **记忆工具**：AI 可主动写入、聚合读取、按内容删除（删除需人工确认），写入自带去重。
-- **会话命令重整记忆**：手打 `/memory_reorganize` 触发项目记忆全量重整（沿用「超出注入预算 且 过冷却期」双门禁 + 原生确认，原文件自动整档备份）；
+- **会话命令重整记忆**：手打 `/memory_reorganize`（中文可打 `/记忆重整`）触发项目记忆全量重整（沿用「超出注入预算 且 过冷却期」双门禁 + 原生确认，原文件自动整档备份）；
 - **设置页集成**：全部配置均可在 DSH 设置面板中图形化调整（按板块折叠），无需改配置文件。
-- **自定义指令**：不适合写进记忆的特殊指令可在设置页配置，插件经系统提示词注入。
+- **自定义指令**：不适合写进记忆的特殊指令写在 profile 的 `.memory-palace/user-commands.md`（设置页也能编辑），插件经系统提示词注入。
 - **记忆注入**：长期记忆与今日日志以「会话起始快照」常驻上下文、按文件身份各只注入一次 —— 既保证每个步骤都可见，又不破坏前缀缓存、不堆积冗余快照。
-- **记忆写入（v1.8.0 起唯一模式）**：**记忆子代理**每轮自动整理今日日志并去重（章节化、标删），**长期记忆 `MEMORY.md` 由主 AI 主动维护**，兼顾自动化与可控性。
-    - v1.8.0 破坏性变更：原「主动记忆（插件模式）」与「智能模式」已整体移除。二者的能力已被覆盖——主动落档由分工指令引导主 AI 承担，逐轮摘要由记忆子代理写进日志承担。
+- **记忆写入**：**记忆子代理**每轮自动整理今日日志并去重（章节化、标删），**长期记忆 `MEMORY.md` 由主 AI 主动维护**，兼顾自动化与可控性。
 - **标准插件包**：经官方插件机制一键安装，无需改动 harness。
 
 ## 记忆文件布局
@@ -34,6 +33,8 @@
     └── memory/
         └── 2026-08-16.md          # 每日工作日志
 ```
+
+> 自定义指令**不放在记忆目录里**，而是 profile 私有文件：`$DSH_HOME/profiles/<profile>/.memory-palace/user-commands.md`（与排障日志同根）。它是个人偏好而非项目事实，跟着 profile 走、可被编辑器直接修改。
 
 ## 工作原理
 
@@ -68,8 +69,6 @@
 | `memory_reorganize` | 仅项目级 | 全量重整 MEMORY.md：双门禁（超出注入预算 且 距上次重整 ≥ 冷却天数）机器校验，原子替换 + 时间戳注释，用户确认弹窗 |
 
 ## 安装
-
-> 要求 DeepSeek Harness **`^0.2.1-alpha.1`**（由 `package.json` 的 `engines.dsh` 判定，0.2.0 线及以下会被插件管理器直接拒绝）。
 
 ### CLI 版（`web` profile）
 
@@ -107,7 +106,6 @@ dsh plugin --profile web remove dsh-memory-palace
 ```
 
 ### Desktop 版
-- github: `github:lovezi0/dsh-memory-palace`
 - npm: `dsh-memory-palace`
 
 ## 配置
@@ -121,6 +119,11 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.8.4**
+    - **1.8.4-alpha.1**
+        - 💥用户自定义指令落盘位置迁移
+        - 💪memory_reorganize 指令支持中文
+        - 🐛memory_reorganize 指令无效问题修复
 - **1.8.3**
     - **1.8.3-alpha.2**
         - 💪超预算回显附重整门禁指引，避免 agent 多轮精简替换凑数

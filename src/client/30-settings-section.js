@@ -25,6 +25,10 @@
       const [remote, setRemote] = react.useState({ value: null, user: {}, revision: undefined, loaded: false });
       const [draft, setDraft] = react.useState(() => projectDraft({ value: null }));
       const [dirty, setDirty] = react.useState(false);
+      // 自定义指令不属于配置节：独立状态，真源是 user-commands.md。
+      // saved = 磁盘上最后一次读到/写入的内容，供「放弃」还原。
+      const [commands, setCommands] = react.useState({ path: "", text: "", saved: "" });
+      const [cmdDirty, setCmdDirty] = react.useState(false);
       const [saving, setSaving] = react.useState(false);
       const [failed, setFailed] = react.useState(false);
       const [validation, setValidation] = react.useState(null);
@@ -33,15 +37,16 @@
       // 的语义 —— 纯前端临时状态、**不持久化**：「用户打开哪张卡」是一次阅读手势，不是配置。
       const [openCards, setOpenCards] = react.useState({});
 
-      // 初始加载（从自有 route 读真实值）。
+      // 初始加载（从自有 route 读真实值）。自定义指令走独立 action（文件真源），与配置并行拉取。
       react.useEffect(() => {
         let alive = true;
         (async () => {
           try {
-            const full = await apiGetFull();
+            const [full, cmd] = await Promise.all([apiGetFull(), apiGetUserCommands()]);
             if (alive) {
               setRemote({ value: full.value, user: full.user, revision: full.revision, loaded: true });
               setDraft(projectDraft({ value: full.value }));
+              setCommands({ path: cmd.path, text: cmd.text, saved: cmd.text });
             }
           } catch (e) {
             if (alive) setRemote((r) => ({ ...r, loaded: true }));
@@ -91,10 +96,23 @@
         if (FIELD_NUMERIC.has(field)) setValidation((v) => (v === field ? null : v));
       }
 
+      // 自定义指令：独立于配置 draft，保存走 userCommands.update（写文件）。
+      function editCommands(text) {
+        setCommands((c) => ({ ...c, text }));
+        setCmdDirty(true);
+        setFailed(false);
+      }
+
       async function save() {
         setSaving(true);
         setFailed(false);
         try {
+          // 自定义指令先落盘：它写的是独立文件，没有 revision 冲突，失败即整体失败提示。
+          if (cmdDirty) {
+            const saved = await apiUpdateUserCommands(commands.text);
+            setCommands({ path: saved.path, text: saved.text, saved: saved.text });
+            setCmdDirty(false);
+          }
           // 整节替换（replace 语义）：空值字段省略 → 自动回退 base/schema 默认。
           const section = {};
           for (const field of Object.keys(draft)) {
@@ -131,6 +149,8 @@
       function discard() {
         setDraft(projectDraft(remote));
         setDirty(false);
+        setCommands((c) => ({ ...c, text: c.saved }));
+        setCmdDirty(false);
         setFailed(false);
         setValidation(null);
       }
@@ -157,11 +177,15 @@
           })
         ]);
 
-      const row = (label, hint, control, field) => h("div", { style: fieldStyle }, [
+      // dirtyNow：该行自己的「未保存」判据（默认跟随整节 dirty）。
+      // 自定义指令写的是独立文件，与配置节的 dirty 不同步，故单独传。
+      const row = (label, hint, control, field, dirtyNow) => h("div", { style: fieldStyle }, [
         h("div", { style: headStyle }, [
           h("label", { style: labelStyle }, label),
-          dirty && field ? h("span", { style: mutedBadgeStyle }, t("unsaved")) : null,
-          !dirty && field && isOverridden(field) ? h("span", { style: badgeStyle }, t("overridden")) : null
+          (dirtyNow === undefined ? dirty : dirtyNow) && field
+            ? h("span", { style: mutedBadgeStyle }, t("unsaved")) : null,
+          !(dirtyNow === undefined ? dirty : dirtyNow) && field && isOverridden(field)
+            ? h("span", { style: badgeStyle }, t("overridden")) : null
         ]),
         control,
         hint ? h("p", { style: hintStyle }, hint) : null
@@ -421,12 +445,14 @@
               onChange: (e) => edit("silentPresets", e.target.value)
             }), "silentPresets")
         ]),
-        // 自定义指令。非空时经 system prompt 追加到「记忆分工说明」之后；
-        // 它是恒定内容（用户配置一次不变），故放 section 而非 E 投影 —— 零缓存成本。
+        // 自定义指令。真源是 <profile>/.memory-palace/user-commands.md（不再进配置）；
+        // 非空时经 system prompt 追加到「记忆分工说明」之后。
+        // 它是恒定内容（改文件才变），故放 section 而非 E 投影 —— 零缓存成本。
         card("custom", t("custom"), t("customDesc"), [
-          row(t("customLabel"), t("customHint"),
+          row(t("customLabel"),
+            commands.path ? t("customHint") + " " + t("customPath") + commands.path : t("customHint"),
             h("textarea", {
-              value: draft.customInstructions,
+              value: commands.text,
               disabled,
               rows: 6,
               placeholder: t("customPlaceholder"),
@@ -438,8 +464,8 @@
                 lineHeight: "1.6",
                 resize: "vertical"
               },
-              onChange: (e) => edit("customInstructions", e.target.value)
-            }), "customInstructions")
+              onChange: (e) => editCommands(e.target.value)
+            }), "userCommands", cmdDirty)
         ]),
         card("smartSummary", t("smartSummary"), t("smartSummaryDesc"), [
           // ---- 本卡片内三处删除已落地——① 记忆写入总开关：写入恒定进行，停写只剩

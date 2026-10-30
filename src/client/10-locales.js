@@ -49,7 +49,12 @@
       distillTimeoutHint: "单次记忆子代理 LLM 调用的超时上限（秒）；超时视为失败并降级。默认 60 秒。",
       customLabel: "自定义指令内容",
       customHint: "非空时注入系统提示词，位置在记忆插件与分工说明之后。对全部会话生效；留空则不注入。",
-      customPlaceholder: "例如：回答用中文；代码注释用英文；提交信息用祈使句…"
+      customPath: "落盘位置：",
+      customPlaceholder: "例如：回答用中文；代码注释用英文；提交信息用祈使句…",
+      reorgAliasLabel: "记忆重整",
+      reorgAliasDesc: "全量重整项目记忆 MEMORY.md（沿用双门禁与确认弹窗）",
+      commandFailed: "命令未执行：",
+      commandStarted: "命令已提交"
     };
 
     const en = {
@@ -103,5 +108,10 @@
       distillTimeoutHint: "Timeout (in seconds) for a single memory sub-agent LLM call; on timeout it fails and degrades. Default 60s.",
       customLabel: "Custom instruction text",
       customHint: "When non-empty it is injected into the system prompt right after the memory-plugin and memory-roles instructions. Applies to every session; leave empty to inject nothing.",
-      customPlaceholder: "e.g. Answer in Chinese; write code comments in English; use imperative commit subjects…"
+      customPath: "Stored at:",
+      customPlaceholder: "e.g. Answer in Chinese; write code comments in English; use imperative commit subjects…",
+      reorgAliasLabel: "Reorganize memory",
+      reorgAliasDesc: "Fully reorganize the project MEMORY.md (gated, with a confirmation dialog)",
+      commandFailed: "Command did not run:",
+      commandStarted: "Command submitted"
     };

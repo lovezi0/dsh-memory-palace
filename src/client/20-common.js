@@ -16,8 +16,9 @@
         summaryTimeoutMs: v.summaryTimeoutMs != null ? String(Math.round((Number(v.summaryTimeoutMs) || 0) / 1000)) : "60",
         summaryModel: v.summaryModel || "",
         reorgCooldownDays: v.reorgCooldownDays != null ? String(v.reorgCooldownDays) : "7",
-        subagentLogBudget: v.subagentLogBudget != null ? String(v.subagentLogBudget) : "20000",
-        customInstructions: v.customInstructions || ""
+        subagentLogBudget: v.subagentLogBudget != null ? String(v.subagentLogBudget) : "20000"
+        // customInstructions 已移出配置：真源是 profile 目录下的
+        // .memory-palace/user-commands.md，走 apiGetUserCommands / apiUpdateUserCommands。
       };
     }
 
@@ -54,4 +55,29 @@
       if (!parsed || parsed.ok !== true) throw new Error(parsed?.error?.message ?? `HTTP ${resp.status}`);
       const v = parsed.value || {};
       return { value: v.value || {}, user: v.user || {}, revision: v.revision };
+    }
+
+    // 自定义指令：不再属于配置节，真源是 <profile>/.memory-palace/user-commands.md。
+    async function apiGetUserCommands() {
+      const resp = await fetch("/memory-palace/api/userCommands.get", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const parsed = await resp.json().catch(() => null);
+      if (!parsed || parsed.ok !== true) throw new Error(parsed?.error?.message ?? `HTTP ${resp.status}`);
+      const v = parsed.value || {};
+      return { path: typeof v.path === "string" ? v.path : "", text: typeof v.text === "string" ? v.text : "" };
+    }
+
+    async function apiUpdateUserCommands(text) {
+      const resp = await fetch("/memory-palace/api/userCommands.update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const parsed = await resp.json().catch(() => null);
+      if (!parsed || parsed.ok !== true) throw new Error(parsed?.error?.message ?? `HTTP ${resp.status}`);
+      const v = parsed.value || {};
+      return { path: typeof v.path === "string" ? v.path : "", text: typeof v.text === "string" ? v.text : "" };
     }

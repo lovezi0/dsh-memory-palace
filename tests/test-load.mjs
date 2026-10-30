@@ -142,14 +142,18 @@ function fakeSession(cwd, provider = "deepseek", model = "deepseek-chat", events
   };
 }
 
-async function loadPlugin(overrides = {}, llmOpts) {
+async function loadPlugin(overrides = {}, llmOpts, opts = {}) {
   const ctx = new Context();
-  const captured = { sections: [], tools: [], listeners: {} };
+  const captured = { sections: [], tools: [], listeners: {}, routes: [] };
   ctx.provide("systemPrompt", { section: (s) => { captured.sections.push(s); return () => {}; } });
   ctx.provide("tools", { register: (t) => { captured.tools.push(t); } });
-  // 设置读写 route 依赖 webServer/webStartup（mock no-op；route 只在真实请求时执行）。
-  ctx.provide("webServer", { register: () => {} });
+  // 设置读写 route 依赖 webServer/webStartup（捕获 route 供 [1e] 直调；其余用例只看注册不触发）。
+  ctx.provide("webServer", { register: (r) => { captured.routes.push(r); } });
   ctx.provide("webStartup", { trustedHosts: [] });
+  // profile 目录：自定义指令（.memory-palace/user-commands.md）的父目录。
+  // 不传则给空临时目录（文件不存在 = 无自定义指令）。
+  const profileDir = opts.profileDir || mkdtempSync(join(tmpdir(), "mem-profile-"));
+  ctx.provide("profileContext", { dir: profileDir });
   const mockLlm = makeMockLlm(llmOpts || {});
   ctx.provide("llm", mockLlm);
   const origOn = ctx.on.bind(ctx);
@@ -251,23 +255,104 @@ console.log("[1c] REMOVED CONFIG FIELDS");
 }
 
 // ---------- [1b] 自定义指令注入（section 内、位于记忆指令之后） ----------
+// v1.8.4 起真源 = <profile>/.memory-palace/user-commands.md（配置项 customInstructions 已摘除）。
 console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
 {
-  const blank = await loadPlugin({ customInstructions: "   \n  " });
-  const tb = blank.captured.sections[0].text();
-  assert(tb.trim().length > 0, "[1b] blank-only custom → intro still returned (non-empty)");
-  assert(tb === tb.trim(), "[1b] blank-only custom leaves no stray whitespace");
+  const profileDir = mkdtempSync(join(tmpdir(), "mem-uc-"));
+  const cmdDir = join(profileDir, ".memory-palace");
+  const cmdFile = join(cmdDir, "user-commands.md");
 
-  const withCustom = await loadPlugin({ customInstructions: "回答一律用中文。\n代码注释用英文。" });
+  // 文件不存在 = 无自定义指令
+  const blank = await loadPlugin({}, undefined, { profileDir });
+  const tb = blank.captured.sections[0].text();
+  assert(tb.trim().length > 0, "[1b] 无指令文件 → intro 仍返回非空");
+  assert(tb === tb.trim(), "[1b] 无指令文件 → 无多余空白");
+  assert(!tb.includes("[用户自定义指令]"), "[1b] 无指令文件 → 不注入指令段落");
+
+  mkdirSync(cmdDir, { recursive: true });
+  writeFileSync(cmdFile, "回答一律用中文。\n代码注释用英文。\n", "utf8");
+
+  const withCustom = await loadPlugin({}, undefined, { profileDir });
   const tc = withCustom.captured.sections[0].text();
-  assert(tc.includes("回答一律用中文。"), "[1b] custom text injected into section");
-  assert(tc.includes("[用户自定义指令] 回答一律用中文。"), "[1b] custom text prefixed with [用户自定义指令]");
-  assert(tc.includes("代码注释用英文。"), "[1b] multi-line custom preserved");
+  assert(tc.includes("回答一律用中文。"), "[1b] 指令文件内容注入 section");
+  assert(tc.includes("[用户自定义指令] 回答一律用中文。"), "[1b] 指令内容带 [用户自定义指令] 前缀");
+  assert(tc.includes("代码注释用英文。"), "[1b] 多行指令原样保留");
   const atIntro = tc.indexOf("记忆");
   const atCustom = tc.indexOf("回答一律用中文。");
-  assert(atIntro !== -1 && atIntro < atCustom, "[1b] custom appended AFTER memory instructions");
+  assert(atIntro !== -1 && atIntro < atCustom, "[1b] 指令追加在记忆分工指令之后");
   // 特性1 回归保护：日志必须留在 E 投影，混进 section 会让 system 前缀每轮失效。
   assert(!tc.includes("# 今日工作日志"), "[1b] daily log must NOT leak into section");
+}
+
+// ---------- [1d] 自定义指令真源 = user-commands.md（旧配置键彻底失效） ----------
+console.log("[1d] USER COMMANDS FILE IS THE ONLY SOURCE");
+{
+  const profileDir = mkdtempSync(join(tmpdir(), "mem-uc2-"));
+  // 旧 profile 里残留的配置值必须【不再】被读取（v1.8.4 破坏性变更，不做迁移）。
+  const legacy = await loadPlugin({ customInstructions: "旧的配置指令" }, undefined, { profileDir });
+  const tl = legacy.captured.sections[0].text();
+  assert(!tl.includes("旧的配置指令"), "[1d] 旧 customInstructions 配置不再生效");
+  assert(!tl.includes("[用户自定义指令]"), "[1d] 旧配置值不会被当成指令注入");
+  assert(Config({}).customInstructions === undefined, "[1d] schema 已无 customInstructions 字段");
+
+  const { createUserCommands } = await import("../lib/common/user-commands.mjs");
+  const uc = createUserCommands({ ctx: { get: () => ({ dir: profileDir }) } });
+  await uc.write("A 指令\nB 指令");
+  assert(uc.readSync() === "A 指令\nB 指令", "[1d] write → readSync 往返一致");
+  assert(uc.file().endsWith(join(".memory-palace", "user-commands.md")),
+    "[1d] 落点 = <profile>/.memory-palace/user-commands.md");
+
+  // 外部改写（编辑器保存）后按 mtime 重读
+  await sleep(20);
+  writeFileSync(uc.file(), "C 指令", "utf8");
+  assert(uc.readSync() === "C 指令", "[1d] 外部改写后按 mtime 重读");
+
+  // profileContext 缺失：读取为空、写入明确抛错（绝不猜路径）
+  const orphan = createUserCommands({ ctx: { get: () => undefined } });
+  assert(orphan.readSync() === "", "[1d] 无 profileContext → 读取为空");
+  let threw = false;
+  try { await orphan.write("x"); } catch { threw = true; }
+  assert(threw, "[1d] 无 profileContext → 写入抛错（不猜路径）");
+}
+
+// ---------- [1e] 自有 route：userCommands.get / update（设置页保存走文件，不走配置节） ----------
+console.log("[1e] /memory-palace/api USER-COMMANDS ROUTES");
+{
+  const profileDir = mkdtempSync(join(tmpdir(), "mem-api-"));
+  const { captured } = await loadPlugin({}, undefined, { profileDir });
+  const route = captured.routes.find((r) => r.path === "/memory-palace/api");
+  assert(!!route, "[1e] 已注册 /memory-palace/api route");
+
+  async function call(method, payload) {
+    const body = payload === undefined ? "{}" : JSON.stringify(payload);
+    const req = {
+      method: "POST",
+      url: `/memory-palace/api/${method}`,
+      headers: { host: "127.0.0.1:3000", "content-type": "application/json" },
+      async *[Symbol.asyncIterator]() { yield Buffer.from(body); },
+    };
+    let out = "";
+    let status = 0;
+    const res = { writeHead: (s) => { status = s; }, end: (s) => { out = s; } };
+    await route.handler(req, res);
+    return { status, json: JSON.parse(out) };
+  }
+
+  const g0 = await call("userCommands.get");
+  assert(g0.json.ok === true, "[1e] get 成功");
+  assert(String(g0.json.value.path).endsWith(join(".memory-palace", "user-commands.md")),
+    "[1e] get 返回文件路径");
+  assert(g0.json.value.text === "", "[1e] 初始为空");
+
+  const u = await call("userCommands.update", { text: "路由写入的指令" });
+  assert(u.json.ok === true && u.json.value.text === "路由写入的指令", "[1e] update 返回写入内容");
+  assert(readFileSync(u.json.value.path, "utf8") === "路由写入的指令", "[1e] 内容已落盘到文件");
+
+  const g1 = await call("userCommands.get");
+  assert(g1.json.value.text === "路由写入的指令", "[1e] get 读到最新内容");
+
+  const bad = await call("userCommands.update", { text: 123 });
+  assert(bad.status === 400 && bad.json.ok === false, "[1e] 非字符串 text → 400");
 }
 
 // ---------- 场景 G：buddy 桥接（写入目标解析） ----------

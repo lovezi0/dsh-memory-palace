@@ -50,7 +50,25 @@ console.log("exports =", Object.keys(exports_));
 console.log("inject =", JSON.stringify(exports_.inject));
 
 const registrations = [];
+const contributions = [];
+const executed = [];
+const notices = [];
+const eventHandlers = [];
 let localeDict = null;
+
+// 命令面替身：中文 contribution 注册到这里；执行转发记进 executed。
+const commandUi = { register: (c) => { contributions.push(c); return () => {}; } };
+function fakeGet(name) {
+  if (name !== "sessions") return undefined;
+  return {
+    scope: () => ({
+      get: (svc) => svc === "conversation"
+        ? { input: { for: () => ({ notify: (level, text) => notices.push({ level, text }) }) } }
+        : undefined
+    })
+  };
+}
+
 const ctx = {
   effect: (cb) => { if (typeof cb === "function") cb(); },
   // 模型枚举走 remote.session.modelCatalog（effect 被 stub 成 no-op，实际不触达；
@@ -58,7 +76,25 @@ const ctx = {
   remote: {
     session: {
       modelCatalog: () => Promise.resolve({ ok: false })
+    },
+    commands: {
+      execute: async (sessionId, line) => {
+        executed.push({ sessionId, line });
+        return { ok: true, value: { result: { kind: "success" } } };
+      }
     }
+  },
+  // client 事件面：command/executed 用它收「命令失败」并补 composer notice。
+  on: (ev, cb) => { eventHandlers.push({ ev, cb }); return () => {}; },
+  get: fakeGet,
+  // 可选服务注入：commandUi 就绪即注册中文命令（effect 同步执行）。
+  inject: (deps, cb) => {
+    if (!deps.includes("commandUi")) return;
+    cb({
+      commandUi,
+      effect: (fn) => { const off = fn(); return typeof off === "function" ? off : () => {}; },
+      get: fakeGet
+    });
   },
   locale: {
     register: (ns, dict) => {
@@ -101,6 +137,34 @@ console.log(
   "slots.inject called for:",
   registrations.map((r) => r.name).join(", ")
 );
+
+// ---- 中文会话命令（commandUi contribution）+ 命令失败提示 ----
+// 宿主 server 命令名限 ASCII，中文只能走 client contribution；这里锁定它真的注册并转发。
+const alias = contributions.find((c) => c.name === "记忆重整");
+if (!alias) throw new Error("FAIL: 中文命令 记忆重整 未注册（commandUi contribution）");
+if (alias.ui.kind !== "action") throw new Error("FAIL: 中文命令必须是 action（裸命令转发）");
+console.log("command alias =", alias.name, "| label =", alias.label());
+alias.ui.run({ sessionId: "s-alias" });
+await new Promise((r) => setTimeout(r, 20));
+if (executed.length !== 1 || executed[0].line !== "/memory_reorganize") {
+  throw new Error("FAIL: 中文命令未转发 /memory_reorganize -> " + JSON.stringify(executed));
+}
+const execHandler = eventHandlers.find((h) => h.ev === "command/executed");
+if (!execHandler) throw new Error("FAIL: 未监听 command/executed（命令结算无即时反馈）");
+// 成功 → info 级即时回显（命令事件是 log-only，不主动提示就"什么都没发生"）
+execHandler.cb("s-alias", "memory_reorganize", { kind: "success", text: "已交给模型重整项目记忆。" });
+if (notices.length !== 1 || notices[0].level !== "info") {
+  throw new Error("FAIL: 命令成功未走 composer notice -> " + JSON.stringify(notices));
+}
+// 失败 → error 级，原文照出
+execHandler.cb("s-alias", "memory_reorganize", { kind: "error", text: "MEMORY.md 未超出注入预算" });
+if (notices.length !== 2 || notices[1].level !== "error" || !notices[1].text.includes("未超出注入预算")) {
+  throw new Error("FAIL: 命令失败未走 composer notice -> " + JSON.stringify(notices));
+}
+// 其他命令不打扰
+execHandler.cb("s-alias", "plan", { kind: "error", text: "x" });
+if (notices.length !== 2) throw new Error("FAIL: 非本插件命令也被提示 -> " + JSON.stringify(notices));
+console.log("command alias forward + settlement notices = OK");
 
 // 锁定新 inject 清单（connection 已被 remote + remote.session 取代）。
 const injectFace = exports_.inject;
