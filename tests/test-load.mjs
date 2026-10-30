@@ -275,7 +275,8 @@ console.log("[1b] CUSTOM INSTRUCTIONS → system prompt injection");
   const withCustom = await loadPlugin({}, undefined, { profileDir });
   const tc = withCustom.captured.sections[0].text();
   assert(tc.includes("回答一律用中文。"), "[1b] 指令文件内容注入 section");
-  assert(tc.includes("[用户自定义指令] 回答一律用中文。"), "[1b] 指令内容带 [用户自定义指令] 前缀");
+  assert(tc.includes("[用户自定义指令]\n回答一律用中文。"),
+    "[1b] 指令前缀独占一行（多行指令不与前缀粘连）");
   assert(tc.includes("代码注释用英文。"), "[1b] 多行指令原样保留");
   const atIntro = tc.indexOf("记忆");
   const atCustom = tc.indexOf("回答一律用中文。");
@@ -394,6 +395,13 @@ console.log("[H] memory_note DEDUP");
   const count = (after.match(/- use tabs for indentation/g) || []).length;
   assert(r1.ok && r2.ok && r3.ok, "[H] all three ok");
   assert(count === 1, "[H] deduplicated to 1 occurrence");
+  // 章节化：旧工具与 memory_write 共用同一套格式（不再追加裸行）
+  assert(after.includes("## 项目约定"), "[H] 默认落在「项目约定」章节");
+  // 显式 section 生效
+  await tool.execute({ content: "deploy via pnpm", section: "构建" });
+  const after2 = readFileSync(mem, "utf8");
+  assert(after2.includes("## 构建") && after2.includes("- deploy via pnpm"),
+    "[H] 显式 section → 写入对应章节");
 }
 
 // ---------- 场景 I：memory_note_user 用户级 + 去重 ----------
@@ -409,6 +417,8 @@ console.log("[I] memory_note_user");
   const count = (after.match(/- prefer spaces over tabs \(global\)/g) || []).length;
   assert(r1.ok && r2.ok, "[I] both ok");
   assert(count === 1, "[I] user-level dedup = 1");
+  // 用户级与项目级同构：章节化，默认「用户偏好」
+  assert(after.includes("## 用户偏好"), "[I] 用户级同样章节化（默认「用户偏好」）");
 }
 
 // ---------- 场景 J：memory_read scope ----------

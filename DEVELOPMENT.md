@@ -19,7 +19,7 @@ dsh-memory-palace/
 │   │   ├── prompts.mjs        #   HYBRID_PROACTIVE（注入 [写入分工] 块）/ SUBAGENT_SYSTEM（子代理 system prompt）
 │   │   ├── subagent.mjs       #   记忆子代理：ctx.llm.stream + tools 自建工具循环（log_read_section/log_write_ops）
 │   │   └── tools.mjs          #   memory_write / memory_update_section / memory_reorganize + pre-execute 闸门
-│   ├── tools.mjs              # 四个记忆工具（memory_note / _user / _read / _delete）+ pre-execute 删除确认闸门
+│   ├── tools.mjs              # 四个记忆工具（memory_note / _user 章节化写入、_read / _delete）+ pre-execute 删除确认闸门
 │   ├── api.mjs                # /memory-palace/api route（设置读写 + 自定义指令读写，HTTP trust-fence）
 │   ├── projection.mjs         # E 投影：agent/pre-step 把记忆正文/今日日志注为常驻 user 消息（可跳首步）
 │   └── client/                # 前端 client 源码（build 按序零依赖拼接为 lib/client.js 单 bundle）

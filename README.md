@@ -60,8 +60,8 @@
 
 | 工具 | 层级 | 作用 |
 |---|---|---|
-| `memory_note` | 项目级 | 把约定/偏好写入当前项目全部目标 `MEMORY.md`（去重） |
-| `memory_note_user` | 用户级 | 把跨项目偏好写入 `~/.deepseek-harness/MEMORY.md`（去重） |
+| `memory_note` | 项目级 | 章节化写入当前项目全部目标 `MEMORY.md`（同 `memory_write` 格式；`section` 可选，默认「项目约定」；同章节去重） |
+| `memory_note_user` | 用户级 | 章节化写入 `~/.deepseek-harness/MEMORY.md`（与项目级同构；`section` 可选，默认「用户偏好」；同章节去重） |
 | `memory_read` | 按需 | 读取记忆。`scope` 默认 `memory`（用户级 + 项目级）；可选 `project`（仅项目级，与 `memory_write` 的写侧 scope 同名）/ `today` / `yesterday` / `daily`（近三天日志）/ `all`（长期记忆 + 日志） |
 | `memory_delete` | 用户级/项目级/每日级 | 按内容删除记忆条目（两阶段确认：先预览匹配位置与内容，用户确认后再删；删除动作经 harness 原生确认弹窗硬闸门，真人点允许才真正执行） |
 | `memory_write` | 项目级/用户级 | 章节化写入：章节存在则末尾追加，不存在则新建章节（章节化格式规范） |
@@ -120,6 +120,9 @@ dsh plugin --profile web remove dsh-memory-palace
 ## 版本历史
 
 - **1.8.4**
+    - **1.8.4-alpha.2**
+        - 🐛用户自定义指令前缀多行指令粘连修复
+        - 💥移除插件用户记忆过时工具
     - **1.8.4-alpha.1**
         - 💥用户自定义指令落盘位置迁移
         - 💪memory_reorganize 指令支持中文

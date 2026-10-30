@@ -37,7 +37,7 @@
 
 ### 2.1 记忆总述与 `[记忆文件]`（两种形态，按是否桥接 buddy 目录切换）
 - **总述**（一句）：记忆真源是 Markdown 文件而非数据库，分三层、读写权限不同。
-- **`[记忆文件]`** 三条，每条自带权限：用户级 MEMORY.md / 项目级 MEMORY.md **可写**（`memory_note_user` / `memory_note`，或 `memory_write` / `memory_update_section` 的对应 `scope`）；每日日志由记忆子代理每轮自动维护，agent **只读**——不写、不改文件头、不重排。
+- **`[记忆文件]`** 四条，每条自带权限：用户级 MEMORY.md / 项目级 MEMORY.md **可写**（`memory_note_user` / `memory_note`，或 `memory_write` / `memory_update_section` 的对应 `scope`）；每日日志由记忆子代理每轮自动维护，agent **只读**——不写、不改文件头、不重排；**章节**一条要求按语义自选章节名、别都塞默认章节，并说明 `memory_note` 系列省略 `section` 时的默认落点（「项目约定」/「用户偏好」）。
 - **两形态差异只在路径与桥接说明**：已桥接（`paths.buddyDirs().length > 0`）→ 只给角色名 + 「当前项目已存在 WorkBuddy/CodeBuddy 记忆目录…不再单独创建 `.deepseek-harness/memory/`」；未桥接 → 三条分别带 `~/.deepseek-harness/MEMORY.md` / `.deepseek-harness/MEMORY.md`（项目根下）/ `.deepseek-harness/memory/YYYY-MM-DD.md`（项目根下）。
 
 ### 2.2 `[读取]`（五条标签式，语义逐字保留）
@@ -73,7 +73,9 @@
 ### 2.6 自定义指令 `[用户自定义指令]`（v1.7.1 特性3；v1.8.4 真源迁移）
 
 真源：**`$DSH_HOME/profiles/<profile>/.memory-palace/user-commands.md`**（`src/common/user-commands.mjs`）。配置项 `customInstructions` 已摘除——不读、不迁移，存量 profile 里的旧值静默失效。设置页「自定义指令」板块仍可编辑，读写走的都是这个文件。
-文件全文 **非空**（trim 后）时以 **`[用户自定义指令]`** 为前缀、追加在「五块 + plan 提示」之后 —— 即 system prompt 里呈现为「总述 → `[记忆文件]` → `[读取]` → `[写入分工]` → `[边界]` →（plan 模式下）`[plan 模式]` → **[用户自定义指令] …**」的顺序。前缀与 `[plan 模式]` 同风格，便于模型识别段落来源。
+文件全文 **非空**（trim 后）时，追加在「五块 + plan 提示」之后：**`[用户自定义指令]` 独占一行**，其下是文件原文（原样保留，不重排、不加缩进）—— 即 system prompt 里呈现为「总述 → `[记忆文件]` → `[读取]` → `[写入分工]` → `[边界]` →（plan 模式下）`[plan 模式]` → **[用户自定义指令]** → 指令原文」的顺序。前缀与 `[plan 模式]` 同风格，便于模型识别段落来源。
+
+- **前缀独占一行**：早期实现把首行拼在前缀同一行（`[用户自定义指令] 第一行`），多行指令的后几行会看起来游离在块外、与其它 `[标签]\n- 条目` 块排版不一致。
 
 - 它是**恒定内容**（改文件才变），故留在 section 而非走投影 —— 与分流依据一致，零缓存成本。
 - 留空或纯空白 → 不注入，`text()` 原样返回 `introFull`（不留空段、不留空白）。
@@ -146,7 +148,8 @@ hybrid 模式每轮 turn/end 触发 `runMemorySubagent`（`src/hybrid/subagent.m
 
 真源：`src/tools.mjs`（`memory_note` / `memory_note_user`）与 `src/hybrid/tools.mjs`（`memory_write` / `memory_update_section` / `memory_reorganize`）。**全部写入路径共用同一套形状规范**（防「换个工具写就绕过规范」的后门）：
 
-- **一条一事**、结论先行、客观第三人称；条目简明，需展开就拆 `- 父项` + 两空格缩进子项（**仅章节化工具**适用——`memory_note` / `memory_note_user` 的参数是单行，无父子结构）。
+- **五个写入工具现在都产章节化格式**：`memory_note` / `memory_note_user` 已收口到 `upsertSectionText`（与 `memory_write` 同一实现、同一去重判据 `sectionHasEntry`）；`section` 参数可选，默认「项目约定」/「用户偏好」。
+- **一条一事**、结论先行、客观第三人称；条目简明，需展开就拆 `- 父项` + 两空格缩进子项（`memory_note` 系列的 `content` 是单行、经 `flattenEntry` 扁平化，无父子结构）。
 - **禁源码坐标**（`file.go:123`）——行号随版本失效，属一次性排查过程。
 - **禁一次性过程**（报错全文 / 命令输出 / 临时 URL）。
 - **路径**只写可复用入口（目录、配置文件名、命令）；**URL** 只留下次必须照填的基址形态。
