@@ -257,4 +257,35 @@ for (const [re, name] of REMOVED_KEY_PATTERNS) {
 }
 console.log("removed config keys absent from client (source-level):", REMOVED_KEY_PATTERNS.map(([, n]) => n).join(", "));
 
+// ---- 主按钮配色防回归：brand 填充背景必须配「随主题反相」的前景色 ----
+// 背景固定取 --dsw-alias-brand-primary（亮色近黑 bluish-1000 / 暗色近白 bluish-50）。
+// 文字若写死浅色（暗色下 #fff 落进近白底），或误用与背景同值的 --dsw-alias-brand-text，
+// 都会让某一侧对比度塌到 1:1。此处从 bundle 反查该组合，避免只靠肉眼发现。
+// 匹配窗口取 300 字符：需覆盖 background 与 color 之间可能新增的属性；再长会跨到下一个对象。
+const BRAND_FILL_LABEL_PATTERN = /background:\s*"var\(--dsw-alias-brand-primary[\s\S]{0,300}?color:\s*"([^"]+)"/g;
+// 与 brand-primary 自动反相的宿主前景色 token（--dsw-alias-brand-text 故意不在其中）。
+const SAFE_BRAND_LABEL_TOKENS = [
+  "--dsw-alias-label-primary-foreground",
+  "--dsw-alias-label-primary-inverted",
+];
+const HARDCODED_LIGHT_COLOR = /^(?:#fff(?:fff)?|white|rgba?\(\s*255\s*,\s*255\s*,\s*255\s*\))$/i;
+const brandFills = [...src.matchAll(BRAND_FILL_LABEL_PATTERN)];
+if (brandFills.length === 0) {
+  throw new Error("FAIL: bundle 中未匹配到 brand 填充按钮（配色断言失效，需同步更新匹配模式）");
+}
+for (const match of brandFills) {
+  const labelColor = match[1].trim();
+  if (HARDCODED_LIGHT_COLOR.test(labelColor)) {
+    throw new Error(
+      `FAIL: brand 填充按钮的文字色不得写死为浅色 "${labelColor}"（亮/暗主题必有一侧不可见）`
+    );
+  }
+  if (!SAFE_BRAND_LABEL_TOKENS.some((token) => labelColor.includes(token))) {
+    throw new Error(
+      `FAIL: brand 填充按钮的文字色须使用可反相 token（${SAFE_BRAND_LABEL_TOKENS.join(" / ")}），实际为 "${labelColor}"`
+    );
+  }
+}
+console.log("brand-fill label tokens =", brandFills.map((m) => m[1].trim()).join(" | "));
+
 console.log("SMOKE OK");

@@ -76,7 +76,7 @@
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.8.0
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.8.5
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -119,6 +119,8 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.8.5**
+    - 🐛修复深色主题下插件设置保存按钮不可见的问题 [@dw1161](https://github.com/dw1161)
 - **1.8.4**
     - npm publish v1.8.4
     - **1.8.4-alpha.2**
