@@ -1,13 +1,13 @@
 // dsh-memory-palace — 把 WorkBuddy 的文件式记忆移植进 DeepSeek Harness。
 //
-// 设计决策（已与用户确认 + 源码核实）：
+// 关键设计约束（已经源码核实）：
 // 1. 真源 = 人类可读 Markdown 文件，可被记事本直接编辑。这是核心价值，绝不妥协。
 // 2. 读取：agent 每轮 assemble 时把记忆注入 system prompt。因 systemPrompt.section 的
 //    text() 必须是【同步】函数（dsh-system-prompt 源码不 await），读盘用同步 node:fs。
 // 3. 写入：监听 session/event 的 turn/end，用异步 node:fs 追加。异步不在同步热路径上，
 //    且用户级记忆位于 ~/.deepseek-harness（harness 自身数据约定是 ~/.dsh；此处单独用
 //    .deepseek-harness 表示本插件的记忆，与 WorkBuddy 的 .workbuddy 解耦），用 node:fs 才能稳定读写。
-// 4. 不引入 dsh-storage：用户已确认 .md 必须保留，dsh-storage-json 落 JSON 与之冲突。
+// 4. 不引入 dsh-storage：.md 必须保留，dsh-storage-json 落 JSON 与之冲突。
 // 5. 依赖解析：本包作为标准 npm 包经 `dsh plugin --profile web add .` 装入 profile 后，
 //    @deepseek-ai/* 由 profile 的 node_modules 提供（声明为 peerDependencies），运行时裸 import 即可。
 // 6. 记忆写入：由记忆子代理每轮自动维护今日日志（章节化、标删去重），

@@ -319,7 +319,7 @@
       const btnAccent = {
         border: "1px solid var(--dsw-alias-brand-primary, #4b5bff)",
         background: "var(--dsw-alias-brand-primary, #4b5bff)",
-        color: "#fff",
+        color: "var(--dsw-alias-label-primary-foreground, #fff)",
         borderRadius: "8px",
         padding: "6px 14px",
         fontSize: "13px",
