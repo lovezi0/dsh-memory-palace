@@ -121,12 +121,14 @@ section("② 记忆子 agent 循环（mock LLM）");
   // 场景 A：无重点 → 单轮 stop 纯文本，推进断点
   {
     const calls = [];
+    const paramsSeen = [];
     const ctx = {
       llm: {
         listProviders: () => [],
         listModels: async () => [],
         stream: async function* (params) {
           calls.push(params.messages.length);
+          paramsSeen.push(params);
           yield { type: "block-start", index: 0, blockType: "text" };
           yield { type: "text-delta", index: 0, text: "本轮为闲聊，无实质内容。" };
           yield { type: "block-end", index: 0, block: { type: "text", text: "本轮为闲聊，无实质内容。" } };
@@ -139,7 +141,10 @@ section("② 记忆子 agent 循环（mock LLM）");
     assert.equal(r.ok, true, "无重点应成功");
     assert.equal(r.mode, "noop");
     assert.equal(state.lastSummarizedSeq, 2, "应推进断点");
-    ok("场景A：无重点单轮收尾 + 推进断点");
+    // 回归：请求必须透传 sessionId。宿主据此为 OpenCode Go 等网关补 x-opencode-session，
+    // 缺失时网关直接 400 MissingSessionID，记忆子代理会整轮静默失败。
+    assert.equal(paramsSeen[0]?.sessionId, "s1", "记忆子代理请求应透传 sessionId");
+    ok("场景A：无重点单轮收尾 + 推进断点 + 透传 sessionId");
   }
 
   // 场景 B：有重点 → tool-calls 多轮落盘
