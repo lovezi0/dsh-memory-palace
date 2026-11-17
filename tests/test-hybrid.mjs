@@ -144,7 +144,10 @@ section("② 记忆子 agent 循环（mock LLM）");
     // 回归：请求必须透传 sessionId。宿主据此为 OpenCode Go 等网关补 x-opencode-session，
     // 缺失时网关直接 400 MissingSessionID，记忆子代理会整轮静默失败。
     assert.equal(paramsSeen[0]?.sessionId, "s1", "记忆子代理请求应透传 sessionId");
-    ok("场景A：无重点单轮收尾 + 推进断点 + 透传 sessionId");
+    // 回归：请求必须带 purpose 标注辅助调用身份。主对话判定（sessionId 有值 且 purpose 为空）
+    // 据此不把子代理请求当主请求；适配器也可将它映射到模型不可见的传输元数据。
+    assert.equal(paramsSeen[0]?.purpose, "memory-subagent", "记忆子代理请求应带 purpose 标识");
+    ok("场景A：无重点单轮收尾 + 推进断点 + 透传 sessionId + purpose 标注");
   }
 
   // 场景 B：有重点 → tool-calls 多轮落盘

@@ -368,9 +368,11 @@ export async function runMemorySubagent({ ctx, getConfig, paths, state, session,
     for (let round = 0; round < MAX_ROUNDS; round++) {
       // 带上 sessionId：宿主据此为支持会话亲和的网关补 x-opencode-session 等路由头
       // （OpenCode Go 缺该头会直接 400 MissingSessionID，记忆子代理将整轮静默失败）。
+      // purpose 标注这是辅助调用（非主对话）：适配器可据此映射到模型不可见的传输元数据，
+      // 也让主对话判定（按 sessionId 有无 + purpose 是否为空）不把本轮当主请求。
       const { finish, asm, stats: llmStats } = await streamTurn(
         ctx,
-        { provider, model, system, messages, tools, sessionId: session.id },
+        { provider, model, system, messages, tools, sessionId: session.id, purpose: "memory-subagent" },
         timeoutMs,
       );
       // LLM 流统计（debug 级 → debug.log）：每轮一次，直接看得到耗时与流进度。

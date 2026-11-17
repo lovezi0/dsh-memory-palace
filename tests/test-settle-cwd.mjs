@@ -36,8 +36,9 @@ function makeHarness(opts = {}) {
       listModels: async () => [],
       stream: async function* (params) {
         // 与真实子代理一致：它总结的是【被喂进来的那份对话】，故内容归属可判。
+        // 标记从对话里按 `XXX-ONLY-CONTENT` 形态提取，避免每加一个会话都要改 mock。
         const blob = JSON.stringify(params.messages ?? []);
-        const tag = blob.includes("AAA-ONLY-CONTENT") ? "AAA" : blob.includes("BBB-ONLY-CONTENT") ? "BBB" : "UNKNOWN";
+        const tag = /([A-Z]{3})-ONLY-CONTENT/.exec(blob)?.[1] ?? "UNKNOWN";
         const done = blob.includes("FROM-" + tag);
         if (done) {
           // 第二轮：已落盘 → 收尾
@@ -200,6 +201,41 @@ console.log("\n③ 日志落盘隔离：并发结算时日志也各归各会话�
   assert.ok(bTxt.includes("log_write_ops"), "B 的日志应记录工具调用");
   assert.ok(/mode=written/.test(aTxt) && /mode=written/.test(bTxt), "两会话都应呈 written 终态");
   ok("并发结算：日志目录与内容均按会话隔离，无串台");
+}
+
+console.log("\n④ 会话身份缺失 → fail-closed，不回落全局 activeSession");
+{
+  // 回归：_settle 曾用 `boundSession || state.activeSession` 兜底。该分支在生产路径不可达
+  // （宿主 session/event 的 session 恒为非空），但一旦可达就会拿到"最近活跃的另一个会话"
+  // → cwd 错 → 内容写进别的项目日志，即 issue #3 的完整复发路径。
+  // 现改为只取入参、缺失即跳过。本节构造：A 已是 activeSession，再发一条无会话身份的消息，
+  // 断言它不得被写进 A 的目录。
+  const wsE = makeWs("ws-e");
+  const logE = join(wsE, ".deepseek-harness", "memory", `${today}.md`);
+  const sessE = mkSess("sess-E", wsE);
+  const { emit } = makeHarness();
+  // ① 先让 sess-E 成为"最近活跃会话"（旧实现的兜底目标）。
+  emit("session/event", sessE, userMsg("EEE-ONLY-CONTENT"));
+  emit("session/event", sessE, toolRes("EEE-tool"));
+  // ② 再发一条【无会话身份】的消息（session 为 undefined）：其 bucket.session 恒为 null。
+  emit("session/event", undefined, { type: "user/message", data: { content: [{ type: "text", text: "LEAK-MARKER-CONTENT" }], source: { kind: "user" } } });
+  emit("session/event", undefined, { type: "turn/end", data: {} });
+  // ③ 也让 sess-E 正常收尾，证明链路本身有效（否则"没写"可能只是链路坏了）。
+  emit("session/event", sessE, { type: "turn/end", data: {} });
+  await new Promise((r) => setTimeout(r, 4000));
+
+  const e = existsSync(logE) ? readFileSync(logE, "utf8") : "";
+  console.log("    E 日志:", JSON.stringify(e.slice(0, 110)));
+  // 链路有效：有身份的会话照常落盘。
+  assert.ok(e.includes("FROM-EEE"), "有会话身份的请求应正常落盘（证明链路有效）");
+  // fail-closed 的可观测判据：旧兜底会让无身份的那轮**回落到 activeSession（sess-E）**，
+  // 于是子代理又按 sess-E 的对话提醒自己再写一遍 → E 的日志出现重复条目。
+  // 故判据是「FROM-EEE 恰好一次」，而非「不含某个标记」（旧兜底复写的是 E 自己的内容）。
+  const dupes = (e.match(/FROM-EEE/g) || []).length;
+  assert.equal(dupes, 1, `无会话身份的那轮不得回落到 activeSession 导致重复结算（旧兜底会写 2 条，实际 ${dupes} 条）`);
+  assert.ok(!e.includes("LEAK-MARKER-CONTENT"), "无会话身份的内容不得混入任何会话目录");
+  assert.equal(existsSync(join(TMP, "ws-e", ".deepseek-harness", "memory", "__nosession__")), false, "不得为无身份会话创建目录");
+  ok("会话身份缺失时 fail-closed：不回落全局 activeSession，内容不串台");
 }
 
 console.log(`\n通过 ${passed} 项`);

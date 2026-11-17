@@ -76,7 +76,7 @@
 
 ```bash
 dsh plugin --profile web add github:lovezi0/dsh-memory-palace
-# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.8.5
+# 锁定版本：dsh plugin --profile web add github:lovezi0/dsh-memory-palace#v1.8.6
 ```
 
 方式二：clone 后本地安装（开发 / 修改源码场景）
@@ -119,8 +119,12 @@ dsh plugin --profile web remove dsh-memory-palace
 
 ## 版本历史
 
+- **1.8.6**
+    - 🐛修复子代理缺少会话sessionId在特定渠道导致工作日志静默不生成的问题 [@Charlie-yangjiaqi](https://github.com/Charlie-yangjiaqi) pr [#9](https://github.com/lovezi0/dsh-memory-palace/pull/9)
+    - 🐛消除跨会话写错项目目录的潜在路径风险
+    - 💪记忆子代理请求补 purpose 标识，使辅助调用在协议层可识别
 - **1.8.5**
-    - 🐛修复深色主题下插件设置保存按钮不可见的问题 [@dw1161](https://github.com/dw1161)
+    - 🐛修复深色主题下插件设置保存按钮不可见的问题 [@dw1161](https://github.com/dw1161) pr [#7](https://github.com/lovezi0/dsh-memory-palace/pull/7)
 - **1.8.4**
     - npm publish v1.8.4
     - **1.8.4-alpha.2**
@@ -172,6 +176,10 @@ dsh plugin --profile web remove dsh-memory-palace
         - 💪适配deepseek harness desktop
 - **v1.7.2-legacy** — dsh-memory-palace 从 v1.0.0 的基础记忆读写（防闲聊闸门、公民指令、删除工具）起步，逐步演进到 v1.7.2 的「混合模式 + 独立通道注入 + 自定义指令 + 记忆子 agent 蒸馏」，全程主线是不断增强记忆生成/注入方式，同时持续修复模式互串、工具串台、缓存堆积等稳定性缺陷。历史，见 [CHANGELOG.md](./CHANGELOG.md)
 - **outdated（0.x）** — 双层 Markdown 记忆读写 / 设置页集成等 0.x 历史，见 [CHANGELOG.md](./CHANGELOG.md)
+
+## 已知问题
+
+- 自v1.8.6起，**Anthropic message threads 槽位与主对话共享**——记忆子代理复用主会话的 `sessionId`（用于网关路由与服务端提示缓存分桶），因此当模型路由到 Anthropic 官方端点并启用 message threads 时，子代理请求会占用主会话的 thread 槽位。前缀不匹配时 SDK 自动降级为新建 thread，**不会串内容、不影响输出正确性**，最坏情况是多一次 thread 创建开销。当前无修复计划。
 
 ## 参考与致谢
 
